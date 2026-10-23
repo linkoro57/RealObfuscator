@@ -5,7 +5,7 @@ Injects Roblox environment validation, hook detection, timing checks,
 integrity verification, and IIFE wrapping for script protection.
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from utils.names import NameGenerator
 from config import ObfuscationConfig
 from typing import List

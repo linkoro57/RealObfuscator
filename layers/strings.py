@@ -5,7 +5,7 @@ Collects all string literals, encrypts them with per-string XOR keys + Base64,
 builds a centralized string table, and injects a polymorphic decoder.
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from utils.crypto import b64_encode
 from utils.names import NameGenerator
 from config import ObfuscationConfig

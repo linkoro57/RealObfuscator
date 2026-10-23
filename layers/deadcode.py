@@ -8,7 +8,7 @@ Injects realistic-looking but unreachable/meaningless code:
 - Fake API calls in unreachable branches
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from utils.names import NameGenerator
 from config import ObfuscationConfig, DeadCodeDensity
 from typing import List

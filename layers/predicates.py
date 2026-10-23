@@ -5,7 +5,7 @@ Generates always-true and always-false conditions using mathematical identities.
 Wraps real code in true predicates, injects dead branches in false predicates.
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from utils.names import NameGenerator
 from config import ObfuscationConfig
 from typing import List

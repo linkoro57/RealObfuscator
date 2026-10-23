@@ -5,7 +5,7 @@ Replace numeric literals with equivalent MBA expressions.
 Uses arithmetic, bitwise XOR identities, and nested compositions.
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from utils.crypto import generate_mba
 from config import ObfuscationConfig
 import random

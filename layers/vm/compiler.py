@@ -17,7 +17,7 @@ Design notes
   SETGLOBAL which the runtime resolves via the _ENV upvalue.
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from .opcodes import OpcodeMap
 from .constant_pool import ConstantPool
 from .proto import FunctionPrototype, UpvalueDesc
@@ -28,7 +28,7 @@ from .instruction import (
     FORMAT_ABX, FORMAT_ASBX, FORMAT_SBX,
 )
 from config import ObfuscationConfig
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Union
 import ast
 import math
 import random
@@ -70,7 +70,7 @@ class _FuncState:
         self.upvalue_index: Dict[str, int] = {}
         # Loop patch lists
         self.break_lists: List[List[int]] = []      # stack of pending break PCs
-        self.continue_targets: List[int | List[Instruction]] = []
+        self.continue_targets: List[Union[int, List[Instruction]]] = []
         self.byte_offset = 0
         # Captured-locals analysis: names of locals declared in this function
         # that are referenced by inner closures.

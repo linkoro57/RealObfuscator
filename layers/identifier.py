@@ -5,8 +5,8 @@ Walk AST, rename all local variables and parameters with obfuscated names.
 Scope-aware to prevent collisions. Never renames globals/Roblox APIs.
 """
 
-from parser.ast_nodes import *
-from parser.scope import Scope, ScopeAnalyzer
+from luau_parser.ast_nodes import *
+from luau_parser.scope import Scope, ScopeAnalyzer
 from utils.names import NameGenerator
 from utils.globals import is_renameable
 from config import ObfuscationConfig

@@ -630,7 +630,7 @@ end"""
                 lines=[]
                 for index,(byte,handler) in enumerate(values):
                     lines.append(f"{'if' if index==0 else 'elseif'} {n['op']}=={byte} then {handler['body'].lstrip(';')}")
-                lines.append(f'else error("VM: bad opcode "..tostring({n["op"]})) end')
+                lines.append(f"else error(\"VM: bad opcode \"..tostring({n['op']})) end")
                 return '\n'.join(lines)
             split=len(values)//2
             pivot=values[split-1][0]
@@ -756,7 +756,8 @@ end"""
         if op_name.startswith('F') and op_name[1:-1] in ('ADD','SUB','MUL','DIV','MOD','POW'):
             symbol = {'ADD':'+','SUB':'-','MUL':'*','DIV':'/','MOD':'%','POW':'^'}[op_name[1:-1]]
             left,right = (b,c) if op_name.endswith('R') else (c,b)
-            return (ops + f";{R}[{c}]={K(f'{n['d']}+1')}"
+            constant_index = n['d'] + '+1'
+            return (ops + f";{R}[{c}]={K(constant_index)}"
                     + store(f"{R}[{left}]{symbol}{R}[{right}]"))
 
         if op_name == 'MOVE':

@@ -6,7 +6,7 @@ Uses while-loop + if/elseif chains with randomized state values.
 Supports state encoding (XOR-based next-state computation).
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from utils.names import NameGenerator
 from config import ObfuscationConfig
 from typing import List

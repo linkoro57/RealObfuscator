@@ -5,7 +5,7 @@ Replaces all global/stdlib function references with lookups through
 an encrypted indirection table. Defeats simple grep for API names.
 """
 
-from parser.ast_nodes import *
+from luau_parser.ast_nodes import *
 from utils.names import NameGenerator
 from utils.globals import LUA_STDLIB, ROBLOX_GLOBALS, ROBLOX_DATATYPES
 from config import ObfuscationConfig

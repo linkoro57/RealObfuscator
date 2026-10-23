@@ -22,7 +22,7 @@ realobfuscator = "main:main"
 
 [tool.setuptools]
 py-modules = ["config", "main", "obfuscator", "version"]
-packages = ["layers", "layers.vm", "parser", "utils"]
+packages = ["layers", "layers.vm", "luau_parser", "utils"]
 
 [tool.setuptools.dynamic]
 version = {attr = "version.__version__"}

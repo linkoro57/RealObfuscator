@@ -7,10 +7,10 @@ transformation pipeline from source code to protected output.
 
 import re
 from config import ObfuscationConfig
-from parser.lexer import Lexer
-from parser.parser import Parser
-from parser.emitter import Emitter
-from parser.ast_nodes import Block
+from luau_parser.lexer import Lexer
+from luau_parser.parser import Parser
+from luau_parser.emitter import Emitter
+from luau_parser.ast_nodes import Block
 from layers.identifier import IdentifierRenamer
 from layers.strings import StringEncryptor
 from layers.numbers import NumberObfuscator
