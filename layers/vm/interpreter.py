@@ -274,11 +274,13 @@ end'''
         if self.config.vm_whiten_constants:
             whiten_partitioned = (
                 f"local _w=_p.ck[(_i+_j*3-2)%#_p.ck+1];"
-                f"_vbyte={n['bxor']}(_vbyte,(_i*131+_j*17+_w)%256);"
+                f"_ws=(_ws*109+_w+_j*37+_i*17)%256;"
+                f"_vbyte={n['bxor']}(_vbyte,_ws);"
             )
             whiten_shared = (
                 f"local _w={n['ck']}[({n['i']}+{n['j']}*3-2)%{n['ckn']}+1];"
-                f"_vbyte={n['bxor']}(_vbyte,({n['i']}*131+{n['j']}*17+_w)%256);"
+                f"_ws=(_ws*109+_w+{n['j']}*37+{n['i']}*17)%256;"
+                f"_vbyte={n['bxor']}(_vbyte,_ws);"
             )
         number_helper = ''
         if numeric:
@@ -294,6 +296,7 @@ end\n'''
 for _i,_kind in pairs(_p.pending) do
 local _v=_p.k[_i]
 local _s={{}}
+{f'local _ws=(_p.ck[(_i-1)%#_p.ck+1]+_i*73+#_v*19)%256' if self.config.vm_whiten_constants else ''}
 for _j=1,#_v do
 local _vbyte={n['bxor']}(string.byte(_v,_j),_p.ck[(_j-1)%#_p.ck+1]);
 {whiten_partitioned}_s[_j]=string.char(_vbyte)
@@ -318,6 +321,7 @@ local {n['tmp']}={n['consts']}[{n['i']}]
 local _kind={n['pending']}[{n['i']}]
 if _kind then
 local {n['tmp2']}={{}}
+{f"local _ws=({n['ck']}[({n['i']}-1)%{n['ckn']}+1]+{n['i']}*73+#{n['tmp']}*19)%256" if self.config.vm_whiten_constants else ''}
 for {n['j']}=1,#{n['tmp']} do
 local _vbyte={n['bxor']}(string.byte({n['tmp']},{n['j']}),{n['ck']}[({n['j']}-1)%{n['ckn']}+1]);
 {whiten_shared}{n['tmp2']}[{n['j']}]=string.char(_vbyte)

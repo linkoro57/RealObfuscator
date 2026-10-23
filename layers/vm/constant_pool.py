@@ -62,12 +62,14 @@ class ConstantPool:
         raw = s.encode('utf-8', 'surrogateescape')
         encrypted = []
         klen = len(self.key)
+        state = (self.key[(index - 1) % klen] + index * 73 + len(raw) * 19) % 256
         for offset, byte in enumerate(raw):
             position = offset + 1
             value = byte ^ self.key[offset % klen]
             if self.whiten:
                 secondary = self.key[(index + position * 3 - 2) % klen]
-                value ^= (index * 131 + position * 17 + secondary) % 256
+                state = (state * 109 + secondary + position * 37 + index * 17) % 256
+                value ^= state
             encrypted.append(value)
         return bytes(encrypted)
 

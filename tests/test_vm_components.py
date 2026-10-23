@@ -13,6 +13,12 @@ class ConstantPoolTests(unittest.TestCase):
         self.assertEqual(first.encrypt_bytes('same value', 1), second.encrypt_bytes('same value', 1))
         self.assertNotEqual(first.encrypt_bytes('same value', 1), first.encrypt_bytes('same value', 2))
 
+    def test_whitening_stream_depends_on_value_length(self):
+        pool = ConstantPool(random.Random(12345), whiten=True)
+        short = pool.encrypt_bytes('repeated', 3)
+        extended = pool.encrypt_bytes('repeated suffix', 3)
+        self.assertNotEqual(short, extended[:len(short)])
+
     def test_basic_profile_keeps_legacy_stream(self):
         pool = ConstantPool(random.Random(12345), whiten=False)
         raw = 'value'.encode('utf-8')
