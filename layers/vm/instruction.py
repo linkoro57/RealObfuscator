@@ -10,7 +10,7 @@ byte order per operation. Signed branches use bias encoding; iterator branches
 use two's complement. Closure link records retain a stable two-operand schema.
 
 The flat byte stream produced by `encode_instruction()` is then encoded with
-repeating multi-byte XOR before being embedded in the output.
+a build-specific, random-access key stream before being embedded in the output.
 """
 
 from dataclasses import dataclass, field

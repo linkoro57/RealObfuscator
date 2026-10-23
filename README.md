@@ -7,7 +7,7 @@
 Transform readable Luau into hardened native code or build-specific virtualized bytecode — directly from the command line.
 
 [![Tests](https://github.com/linkoro57/RealObfuscator/actions/workflows/tests.yml/badge.svg)](https://github.com/linkoro57/RealObfuscator/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/version-1.5.0-7c3aed.svg)](https://github.com/linkoro57/RealObfuscator)
+[![Version](https://img.shields.io/badge/version-1.6.0-7c3aed.svg)](https://github.com/linkoro57/RealObfuscator)
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.11%20%7C%203.13-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Luau](https://img.shields.io/badge/Luau-tested-00a2ff.svg)](https://luau.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)](LICENSE)
@@ -109,7 +109,7 @@ Every hardened VM build receives a different runtime layout. The maximum profile
 
 - build-specific opcode values and aliases;
 - diversified operand layouts and handler variants;
-- rolling encrypted bytecode reads;
+- random-access bytecode whitening derived from position, prototype length, and multiple key bytes;
 - per-prototype keys and partitioned constant pools;
 - fused instructions and generated superinstructions;
 - payload integrity verification;

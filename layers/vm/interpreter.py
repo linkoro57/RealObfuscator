@@ -25,7 +25,7 @@ Per-build polymorphism
 ----------------------
   * Opcode byte values are randomized
   * Multiple aliases (distinct bytes) map to the same handler
-  * Bytecode uses repeating multi-byte XOR with per-build keys
+  * Bytecode uses a position-dependent stream with per-build keys
   * Hardened builds use shuffled function constant pools and independent keys
   * Operand order and byte order vary by operation in hardened builds
   * Eligible straight-line sequences can use fused instructions
@@ -79,6 +79,21 @@ ROBLOX_GLOBALS = {
 }
 
 
+def encrypt_bytecode_stream(bytecode, key, whiten=False):
+    """Encode bytecode with a random-access, position-dependent key stream."""
+    length = len(bytecode)
+    klen = len(key)
+    encoded = []
+    for offset, byte in enumerate(bytecode):
+        position = offset + 1
+        value = byte ^ key[offset % klen]
+        if whiten:
+            secondary = key[(position * 5 + length - 1) % klen]
+            value ^= (position * 73 + length * 29 + secondary * 3) % 256
+        encoded.append(value)
+    return encoded
+
+
 class InterpreterGenerator:
     """Generates the Luau runtime that executes our register-based bytecode."""
 
@@ -89,7 +104,7 @@ class InterpreterGenerator:
         self.opcodes = opcodes
         self.pool = pool
         self.name_gen = name_gen
-        # Per-build repeating key for bytecode stream encoding
+        # Per-build key for bytecode stream encoding
         klen = self.rng.randint(4, 16)
         self.bc_key: List[int] = [self.rng.randint(1, 255) for _ in range(klen)]
         self.hash_seed = self.rng.randrange(4294967296)
@@ -389,12 +404,9 @@ local {n['bkn']}=#{n['bk']}"""
         return flat
 
     def _encrypt_bytecode(self, bc: List[int], key=None) -> List[int]:
-        """Apply repeating multi-byte XOR to the byte stream.
-
-        The runtime decrypts using key index `(pc-1) % klen + 1` (Lua 1-based).
-        """
+        """Encode bytecode while retaining random access for VM branches."""
         key = self.bc_key if key is None else key
-        return [b ^ key[i % len(key)] for i, b in enumerate(bc)]
+        return encrypt_bytecode_stream(bc, key, self.config.vm_whiten_bytecode)
 
     def _hash_bytes(self, data: List[int]) -> int:
         h = self.hash_seed
@@ -553,19 +565,27 @@ end"""
 
     def _gen_bytecode_decode(self, n: Dict[str, str]) -> str:
         if self.config.vm_per_proto_keys:
+            whiten = ''
+            if self.config.vm_whiten_bytecode:
+                whiten = (f"local _w=_key[(_j*5+#_p.bc-1)%#_key+1];"
+                           f"_v={n['bxor']}(_v,(_j*73+#_p.bc*29+_w*3)%256);")
             return f'''local function {n['decode']}(_p)
 local _key=_p.bk
 {f"_key={n['unkey']}(_key,_p.ks)" if self.config.vm_dynamic_keys else ''}
-for _j=1,#_p.bc do _p.bc[_j]={n['bxor']}(_p.bc[_j],_key[(_j-1)%#_key+1]) end
+for _j=1,#_p.bc do local _v={n['bxor']}(_p.bc[_j],_key[(_j-1)%#_key+1]);{whiten}_p.bc[_j]=_v end
 _p.bk=nil;_p.decoded=true
 _p.ks=nil
 end'''
         key = f"{n['protos']}[{n['i']}].bk" if self.config.vm_per_proto_keys else n['bk']
         size = f"#{key}" if self.config.vm_per_proto_keys else n['bkn']
+        whiten = ''
+        if self.config.vm_whiten_bytecode:
+            whiten = (f"local _w={key}[({n['j']}*5+#{n['bc']}-1)%{size}+1];"
+                       f"_v={n['bxor']}(_v,({n['j']}*73+#{n['bc']}*29+_w*3)%256);")
         return f"""for {n['i']}=1,#{n['protos']} do
 local {n['bc']}={n['protos']}[{n['i']}].bc
 for {n['j']}=1,#{n['bc']} do
-{n['bc']}[{n['j']}]={n['bxor']}({n['bc']}[{n['j']}],{key}[({n['j']}-1)%{size}+1])
+local _v={n['bxor']}({n['bc']}[{n['j']}],{key}[({n['j']}-1)%{size}+1]);{whiten}{n['bc']}[{n['j']}]=_v
 end
 end"""
 
@@ -719,7 +739,11 @@ end"""
     def _byte_expr(self, n: Dict[str,str], pos: str) -> str:
         if self.config.vm_predecode_bytecode:
             return f"{n['bc']}[{pos}]"
-        return f"{n['bxor']}({n['bc']}[{pos}],{n['bk']}[({pos}-1)%{n['bkn']}+1])"
+        value = f"{n['bxor']}({n['bc']}[{pos}],{n['bk']}[({pos}-1)%{n['bkn']}+1])"
+        if self.config.vm_whiten_bytecode:
+            secondary = f"{n['bk']}[(({pos})*5+#{n['bc']}-1)%{n['bkn']}+1]"
+            value = f"{n['bxor']}({value},(({pos})*73+#{n['bc']}*29+{secondary}*3)%256)"
+        return value
 
     def _read_u16_inline(self, n: Dict[str, str], dest: str, byte_order='little') -> str:
         """Generate inline code to read a u16 from BC at PC, advancing PC."""
