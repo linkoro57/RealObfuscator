@@ -1,19 +1,36 @@
 """Check simplified commands, legacy presets, and preservation of input files."""
+from contextlib import contextmanager
+import os
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from click.testing import CliRunner
 from config import ObfuscationConfig, ProtectionLevel, lightweight_config
 from main import main
 from obfuscator import Obfuscator
 from test_luau import LUAU, run
+from version import __version__
+
+
+@contextmanager
+def isolated_directory():
+    """Run a test in a temporary working directory without deprecated Click APIs."""
+    previous = Path.cwd()
+    with tempfile.TemporaryDirectory() as directory:
+        os.chdir(directory)
+        try:
+            yield Path(directory)
+        finally:
+            os.chdir(previous)
 
 
 class CliTests(unittest.TestCase):
     def test_default_and_named_modes(self):
         runner = CliRunner()
         source = 'local text="héllo";local function f(n) return text,n+10 end;return f(5)'
-        with runner.isolated_filesystem():
+        with isolated_directory():
             Path('script with spaces.luau').write_text(source, encoding='utf-8')
             rename = lightweight_config(seed=12345)
             rename.encrypt_strings = False
@@ -43,7 +60,7 @@ class CliTests(unittest.TestCase):
 
     def test_legacy_presets_and_rolling(self):
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with isolated_directory():
             Path('input.lua').write_text('return "unchanged",17', encoding='utf-8')
             for old, new in [(['--lightweight'], ['--mode', 'lightweight']),
                              (['--rename-only'], ['--mode', 'rename']),
@@ -69,7 +86,7 @@ class CliTests(unittest.TestCase):
 
     def test_directory_paths_and_partial_failure(self):
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with isolated_directory():
             Path('scripts/sub').mkdir(parents=True)
             Path('scripts/one.lua').write_text('return 1', encoding='utf-8')
             Path('scripts/sub/two.luau').write_text('return 2', encoding='utf-8')
@@ -92,7 +109,7 @@ class CliTests(unittest.TestCase):
 
     def test_rejected_paths_and_options_preserve_files(self):
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with isolated_directory():
             source = 'return 17'
             Path('input.lua').write_text(source, encoding='utf-8')
             Path('scripts').mkdir()
@@ -116,6 +133,14 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 1, result.output)
             self.assertEqual(Path('keep.lua').read_text(encoding='utf-8'), 'keep me')
 
+            Path('valid.lua').write_text(source, encoding='utf-8')
+            with patch('main.os.replace', side_effect=OSError('simulated disk failure')):
+                result = runner.invoke(main, ['valid.lua', '-o', 'keep.lua', '--quiet'])
+            self.assertEqual(result.exit_code, 1, result.output)
+            self.assertIn('simulated disk failure', result.output)
+            self.assertEqual(Path('keep.lua').read_text(encoding='utf-8'), 'keep me')
+            self.assertEqual(list(Path('.').glob('.keep.lua.*.tmp')), [])
+
     def test_help_and_version(self):
         runner = CliRunner()
         common = runner.invoke(main, ['--help'])
@@ -129,4 +154,4 @@ class CliTests(unittest.TestCase):
         self.assertIn('--level', full.output)
         self.assertIn('--vm-hardening', full.output)
         self.assertIn('--vm-cached', common.output)
-        self.assertIn('1.1.0', runner.invoke(main, ['--version']).output)
+        self.assertIn(__version__, runner.invoke(main, ['--version']).output)

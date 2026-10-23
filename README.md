@@ -1,5 +1,8 @@
 # RealObfuscator
 
+[![Tests](https://github.com/linkoro57/RealObfuscator/actions/workflows/tests.yml/badge.svg)](https://github.com/linkoro57/RealObfuscator/actions/workflows/tests.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+
 RealObfuscator is a command-line Luau obfuscator designed for Roblox scripts. It can rename identifiers, encode strings and numbers, transform control flow, inject dead code, and virtualize programs with a custom VM.
 
 > [!IMPORTANT]
@@ -18,12 +21,24 @@ cd RealObfuscator
 python -m pip install -r requirements.txt
 ```
 
+You can alternatively install the project and its `realobfuscator` command directly:
+
+```sh
+python -m pip install .
+```
+
 ## Usage
 
 Obfuscate a file with the default lightweight mode:
 
 ```sh
 python main.py script.luau
+```
+
+When installed as a package, the equivalent command is:
+
+```sh
+realobfuscator script.luau
 ```
 
 The result is written to `script.obf.luau`. To choose another destination:
@@ -89,6 +104,8 @@ The available protection levels are `MINIMAL`, `STANDARD`, `MAXIMUM`, and `PARAN
 ```sh
 python -m unittest discover -s tests -v
 ```
+
+Every push and pull request is also tested on Python 3.9, 3.11, and 3.13 through GitHub Actions.
 
 Runtime tests require the official [Luau tools](https://github.com/luau-lang/luau/releases/tag/0.741). Place the executable in `tests/runtime/0.741/`, or provide its path through `LUAU_BIN`.
 

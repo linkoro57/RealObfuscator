@@ -101,10 +101,40 @@ class ObfuscationConfig:
 
     def __post_init__(self):
         """Apply protection level presets and initialize RNG."""
+        self._validate()
         if self.level is not None:
             self._apply_level(self.level)
         self._resolve_vm_profile()
         self._init_rng()
+
+    def _validate(self):
+        """Reject invalid public settings before starting a transformation."""
+        if self.level is not None and not isinstance(self.level, ProtectionLevel):
+            raise TypeError('level must be a ProtectionLevel value or None')
+        if not isinstance(self.dead_code_density, DeadCodeDensity):
+            raise TypeError('dead_code_density must be a DeadCodeDensity value')
+        if self.string_decode_mode not in ('lazy', 'eager'):
+            raise ValueError("string_decode_mode must be 'lazy' or 'eager'")
+        if not isinstance(self.name_min_length, int) or isinstance(self.name_min_length, bool):
+            raise TypeError('name_min_length must be an integer')
+        if not isinstance(self.name_max_length, int) or isinstance(self.name_max_length, bool):
+            raise TypeError('name_max_length must be an integer')
+        if self.name_min_length < 1:
+            raise ValueError('name_min_length must be at least 1')
+        if self.name_max_length < self.name_min_length:
+            raise ValueError('name_max_length must be greater than or equal to name_min_length')
+        if not isinstance(self.mba_depth, int) or isinstance(self.mba_depth, bool):
+            raise TypeError('mba_depth must be an integer')
+        if not 1 <= self.mba_depth <= 3:
+            raise ValueError('mba_depth must be between 1 and 3')
+        for name in ('min_blocks_for_cff', 'fake_function_count'):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TypeError(f'{name} must be an integer')
+            if value < 0:
+                raise ValueError(f'{name} must be non-negative')
+        if self.seed is not None and (not isinstance(self.seed, int) or isinstance(self.seed, bool)):
+            raise TypeError('seed must be an integer or None')
 
     def _apply_level(self, level: ProtectionLevel):
         """Apply a protection level preset, setting layer toggles."""

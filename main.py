@@ -1,9 +1,12 @@
 """Command-line interface for RealObfuscator, a Luau obfuscator for Roblox."""
 from pathlib import Path
+import os
+import tempfile
 import time
 import click
 from config import ObfuscationConfig, ProtectionLevel, DeadCodeDensity, lightweight_config
 from obfuscator import Obfuscator
+from version import __version__
 
 
 def show_all_help(ctx, param, value):
@@ -30,7 +33,7 @@ def show_all_help(ctx, param, value):
 @click.option('--vm-rolling/--vm-cached', default=None,
               help='VM bytecode reads: rolling (default), or cached per function. Requires VM mode.')
 @click.option('--quiet', '-q', is_flag=True, help='Show errors only.')
-@click.version_option('1.1.0', prog_name='RealObfuscator')
+@click.version_option(__version__, prog_name='RealObfuscator')
 @click.option('--help-all', is_flag=True, is_eager=True, expose_value=False,
               callback=show_all_help, help='Show individual settings and older flags.')
 @click.option('--input', '-i', 'input_path', type=click.Path(path_type=Path),
@@ -143,18 +146,35 @@ def main(source, input_path, output_path, mode, level, vm, antitamper, strings,
 
 def process_file(input_path: Path, output_path: Path,
                  obfuscator: Obfuscator, quiet: bool) -> tuple:
-    """Generate before writing so failed transformations do not replace files."""
+    """Generate and atomically replace output so failures preserve old files."""
     try:
         source = input_path.read_text(encoding='utf-8')
         result = obfuscator.obfuscate(source)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(result, encoding='utf-8')
+        write_atomic(output_path, result)
         if not quiet:
             click.echo(f'{input_path} -> {output_path} ({len(source.encode("utf-8")):,} -> {len(result.encode("utf-8")):,} bytes)')
         return 1, 0
     except Exception as error:
         click.echo(f'Error: {input_path}: {error}', err=True)
         return 0, 1
+
+
+def write_atomic(output_path: Path, content: str):
+    """Write UTF-8 text beside its destination and replace it in one operation."""
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8', newline='', delete=False,
+                dir=output_path.parent, prefix=f'.{output_path.name}.', suffix='.tmp') as file:
+            temporary_path = Path(file.name)
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, output_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def process_directory(input_dir: Path, output_dir: Path,
