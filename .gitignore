@@ -211,6 +211,9 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Locally downloaded Luau test runtimes
+tests/runtime/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

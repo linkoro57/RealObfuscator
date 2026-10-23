@@ -28,6 +28,17 @@ jobs:
       - name: Install project
         run: python -m pip install .
 
+      - name: Install Luau runtime
+        run: |
+          mkdir -p tests/runtime/0.741
+          curl --fail --location --retry 3 \
+            https://github.com/luau-lang/luau/releases/download/0.741/luau-ubuntu.zip \
+            --output /tmp/luau.zip
+          echo "134dc762ad26232af83e43f98dec03ff6030dd3a4452f9408b9d50ccea025503  /tmp/luau.zip" \
+            | sha256sum --check
+          unzip -q /tmp/luau.zip -d tests/runtime/0.741
+          chmod +x tests/runtime/0.741/luau
+
       - name: Compile Python sources
         run: >-
           python -m compileall -q
@@ -36,6 +47,8 @@ jobs:
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+        env:
+          REALOBFUSCATOR_REQUIRE_RUNTIME: "1"
 
       - name: Smoke-test installed command
         run: realobfuscator --version

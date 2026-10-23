@@ -33,6 +33,7 @@ Per-build polymorphism
   * Hardened output mixes operation sequences and uses a numeric dispatch tree
 """
 
+import base64
 import random
 from typing import Dict, List
 
@@ -112,6 +113,8 @@ class InterpreterGenerator:
 
         # 1. Compatibility shims
         parts.append(self._gen_compat_shims(names))
+        if self.config.vm_pack_bytecode:
+            parts.append(self._gen_bytecode_unpacker(names))
         if self.config.vm_dynamic_keys or self.config.vm_integrity_check:
             parts.append(self._gen_payload_helpers(names))
 
@@ -207,6 +210,7 @@ class InterpreterGenerator:
             'hashstep', 'hashuint', 'hashblob', 'hashkey', 'hashvalue',
             'hashpool', 'hashproto', 'salt', 'unkey', 'number',
             'decode',
+            'unpackbc',
         ]
         out = {}
         for k in keys:
@@ -233,6 +237,24 @@ end)()
 local {n['unpack']}=unpack or table.unpack
 local {n['env']}=(getfenv and getfenv()) or _G
 local {n['pack']}=table.pack or function(...) return {{n=select("#",...),...}} end"""
+
+    def _gen_bytecode_unpacker(self, n: Dict[str, str]) -> str:
+        """Decode a compact Base64 byte stream into the VM's byte table."""
+        return f'''local function {n['unpackbc']}(_s)
+local _a="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local _out={{}};local _buffer=0;local _bits=0
+for _i=1,#_s do
+local _p=string.find(_a,string.sub(_s,_i,_i),1,true)
+if _p then
+_buffer=_buffer*64+_p-1;_bits=_bits+6
+if _bits>=8 then
+_bits=_bits-8;_out[#_out+1]=math.floor(_buffer/(2^_bits))%256
+_buffer=_buffer%(2^_bits)
+end
+end
+end
+return _out
+end'''
 
     # =================================================================
     # Constant pool emission + runtime string decryption
@@ -360,7 +382,11 @@ local {n['bkn']}=#{n['bk']}"""
         lines = [f"local {n['protos']}={{}}"]
         for i, p in enumerate(protos):
             enc_bc = self._encrypt_bytecode(p.bytecode,p.bytecode_key if self.config.vm_per_proto_keys else None)
-            bc_str = ','.join(str(b) for b in enc_bc)
+            if self.config.vm_pack_bytecode:
+                packed = base64.b64encode(bytes(enc_bc)).decode('ascii')
+                bytecode_field = f'{n["unpackbc"]}("{packed}")'
+            else:
+                bytecode_field = '{' + ','.join(str(b) for b in enc_bc) + '}'
             sp_str = ','.join(str(idx + 1) for idx in p._sp_indices)  # Lua 1-based
             salt = self._hash_bytes(enc_bc)
             pool_field = ''
@@ -385,7 +411,7 @@ local {n['bkn']}=#{n['bk']}"""
             hash_field = f",ih={digest.value}" if self.config.vm_integrity_check else ''
             lines.append(
                 f"{n['protos']}[{i + 1}]="
-                f"{{bc={{{bc_str}}},"
+                f"{{bc={bytecode_field},"
                 f"np={p.num_params},"
                 f"va={'true' if p.is_vararg else 'false'},"
                 f"nuv={len(p.upvalues)},"

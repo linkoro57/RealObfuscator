@@ -68,6 +68,7 @@ class CliTests(unittest.TestCase):
                              (['--level', '4', '--vm-hardening', 'max'], ['--mode', 'vm']),
                              (['--level', '4', '--vm-rolling'], ['--mode', 'vm', '--vm-rolling']),
                              (['--level', '4', '--vm-cached'], ['--mode', 'vm', '--vm-cached']),
+                             (['--level', '4', '--vm-packed'], ['--mode', 'vm', '--vm-packed']),
                              (['--mode', 'vm'], ['--mode', 'vm', '--vm-rolling'])]:
                 with self.subTest(old=old):
                     legacy = runner.invoke(main, ['-i', 'input.lua', '-o', 'old.lua', '--seed', '67890', *old])
@@ -121,6 +122,7 @@ class CliTests(unittest.TestCase):
                        ['input.lua', '--mode', 'native', '--vm'],
                        ['input.lua', '--mode', 'rename', '--strings'],
                        ['input.lua', '--vm-rolling'], ['input.lua', '--vm-cached'],
+                       ['input.lua', '--vm-packed'], ['input.lua', '--vm-unpacked'],
                        ['input.lua', '--vm-hardening', 'max']]
             for args in invalid:
                 with self.subTest(args=args):
@@ -154,4 +156,5 @@ class CliTests(unittest.TestCase):
         self.assertIn('--level', full.output)
         self.assertIn('--vm-hardening', full.output)
         self.assertIn('--vm-cached', common.output)
+        self.assertIn('--vm-packed', common.output)
         self.assertIn(__version__, runner.invoke(main, ['--version']).output)

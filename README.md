@@ -78,6 +78,12 @@ VM mode uses rolling bytecode reads by default. Use `--vm-cached` to favor perfo
 python main.py script.luau --mode vm --vm-cached
 ```
 
+Hardened VM profiles pack encrypted bytecode by default to reduce output size. You can control this explicitly with `--vm-packed` or `--vm-unpacked`:
+
+```sh
+python main.py script.luau --mode vm --vm-packed
+```
+
 Display every option, including advanced settings and legacy aliases:
 
 ```sh

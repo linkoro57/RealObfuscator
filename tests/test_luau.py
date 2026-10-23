@@ -152,7 +152,13 @@ local a=table.pack(f());a[a.n+1]=1/a[3];a.n+=1;return table.unpack(a,1,a.n)''')
         source='local function unused() return 9917 end;return 5050,"private-text",false,nil'
         output=Obfuscator(ObfuscationConfig(virtualize=True,vm_hardening='max',seed=12345)).obfuscate(source)
         self.assertEqual(run(output),run(source))
-        fields=[r'bc=\{(\d+)', r'bk=\{q=\{(\d+)', r'ck=\{q=\{(\d+)',
+        packed=re.search(r'bc=\w+\("([A-Za-z0-9+/])',output)
+        self.assertIsNotNone(packed)
+        replacement='B' if packed[1]!='B' else 'C'
+        damaged=output[:packed.start(1)]+replacement+output[packed.end(1):]
+        with self.assertRaisesRegex(AssertionError,'integrity check failed'):
+            run(damaged)
+        fields=[r'bk=\{q=\{(\d+)', r'ck=\{q=\{(\d+)',
                 r'\},s=(\d+)', r'kc=(\d+)', r'np=(\d+)', r'ms=(\d+)', r'sp=\{(\d+)',
                 r'pending=\{\[\d+\]=([12])', r'(?<!\w)k=\{[^}]*?\\(\d{3})']
         for pattern in fields:
@@ -164,6 +170,17 @@ local a=table.pack(f());a[a.n+1]=1/a[3];a.n+=1;return table.unpack(a,1,a.n)''')
             damaged=output[:match.start(1)]+replacement+output[match.end(1):]
             with self.subTest(field=pattern), self.assertRaisesRegex(AssertionError,'integrity check failed'):
                 run(damaged)
+
+    def test_packed_vm_bytecode_reduces_large_output(self):
+        source='local x=0;'+';'.join(f'x=x+{i}' for i in range(1,160))+';return x'
+        packed=Obfuscator(ObfuscationConfig(
+            virtualize=True,vm_hardening='max',vm_pack_bytecode=True,seed=12345,
+        )).obfuscate(source)
+        unpacked=Obfuscator(ObfuscationConfig(
+            virtualize=True,vm_hardening='max',vm_pack_bytecode=False,seed=12345,
+        )).obfuscate(source)
+        self.assertLess(len(packed),len(unpacked))
+        self.assertEqual(run(packed),run(source))
 
     def test_large_native_closure(self):
         source=('local function factory()\n'

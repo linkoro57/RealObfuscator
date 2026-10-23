@@ -32,6 +32,8 @@ def show_all_help(ctx, param, value):
               help='lightweight (default), rename, native, or vm (max profile).')
 @click.option('--vm-rolling/--vm-cached', default=None,
               help='VM bytecode reads: rolling (default), or cached per function. Requires VM mode.')
+@click.option('--vm-packed/--vm-unpacked', default=None,
+              help='Compact VM bytecode representation (default for hardened VM profiles).')
 @click.option('--quiet', '-q', is_flag=True, help='Show errors only.')
 @click.version_option(__version__, prog_name='RealObfuscator')
 @click.option('--help-all', is_flag=True, is_eager=True, expose_value=False,
@@ -54,7 +56,7 @@ def show_all_help(ctx, param, value):
 @click.option('--lightweight', is_flag=True, hidden=True, help='Alias for --mode lightweight.')
 @click.option('--rename-only', is_flag=True, hidden=True, help='Alias for --mode rename.')
 def main(source, input_path, output_path, mode, level, vm, antitamper, strings,
-         cff, deadcode, seed, recursive, density, vm_hardening, vm_rolling,
+         cff, deadcode, seed, recursive, density, vm_hardening, vm_rolling, vm_packed,
          lightweight, rename_only, quiet):
     """Obfuscate a Luau file or directory for Roblox.
 
@@ -86,7 +88,7 @@ def main(source, input_path, output_path, mode, level, vm, antitamper, strings,
         mode = 'lightweight'
 
     if mode in ('lightweight', 'rename'):
-        if vm or vm_rolling is not None or antitamper or vm_hardening is not None or cff or deadcode or density is not None:
+        if vm or vm_rolling is not None or vm_packed is not None or antitamper or vm_hardening is not None or cff or deadcode or density is not None:
             raise click.UsageError('Lightweight/rename modes cannot enable VM, anti-tamper, control-flow, or dead-code options.')
         config = lightweight_config(seed=seed)
         if mode == 'rename':
@@ -116,6 +118,10 @@ def main(source, input_path, output_path, mode, level, vm, antitamper, strings,
         if not config.virtualize:
             raise click.UsageError('--vm-rolling/--vm-cached requires --mode vm, --vm, or --level 4.')
         config.vm_predecode_bytecode = not vm_rolling
+    if vm_packed is not None:
+        if not config.virtualize:
+            raise click.UsageError('--vm-packed/--vm-unpacked requires --mode vm, --vm, or --level 4.')
+        config.vm_pack_bytecode = vm_packed
 
     directory_name = input_p.resolve() if input_p.is_dir() else None
     output_suffix = input_p.suffix if input_p.suffix.lower() in {'.lua', '.luau'} else '.luau'
