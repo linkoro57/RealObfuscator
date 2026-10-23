@@ -156,7 +156,7 @@ class VMCompiler:
                                  fusion=config.vm_fuse_instructions,extended=config.vm_extended_fusion,
                                  handler_variants=config.vm_handler_variants)
         self._FPF = self.opcodes.table_flush_width
-        self.pool = ConstantPool(self.rng)
+        self.pool = ConstantPool(self.rng, whiten=config.vm_whiten_constants)
         self.fs: Optional[_FuncState] = None
 
     _IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
@@ -446,7 +446,7 @@ class VMCompiler:
             indices = list(dict.fromkeys(getattr(ins,fields[ins.op_name])
                                         for ins in proto.instructions if ins.op_name in fields))
             self.rng.shuffle(indices)
-            pool = ConstantPool(self.rng)
+            pool = ConstantPool(self.rng, whiten=self.config.vm_whiten_constants)
             mapping = {index:pool.add(self.pool.constants[index]) for index in indices}
             for ins in proto.instructions:
                 if ins.op_name in fields:

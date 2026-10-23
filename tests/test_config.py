@@ -21,6 +21,8 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(ObfuscationConfig(virtualize=True, vm_hardening='max').vm_pack_bytecode)
         self.assertFalse(ObfuscationConfig(virtualize=True, vm_hardening='basic').vm_pack_constants)
         self.assertFalse(ObfuscationConfig(virtualize=True, vm_hardening='max').vm_pack_constants)
+        self.assertFalse(ObfuscationConfig(virtualize=True, vm_hardening='basic').vm_whiten_constants)
+        self.assertTrue(ObfuscationConfig(virtualize=True, vm_hardening='max').vm_whiten_constants)
         self.assertFalse(ObfuscationConfig(
             virtualize=True, vm_hardening='max', vm_pack_bytecode=False,
         ).vm_pack_bytecode)

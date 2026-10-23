@@ -89,6 +89,7 @@ class ObfuscationConfig:
     vm_superinstructions: Optional[bool] = None
     vm_pack_bytecode: Optional[bool] = None
     vm_pack_constants: Optional[bool] = None
+    vm_whiten_constants: Optional[bool] = None
     vm_predecode_bytecode: bool = False   # Rolling reads by default; True caches decoded bytecode
 
     # --- Global Settings ---
@@ -173,6 +174,7 @@ class ObfuscationConfig:
             'vm_superinstructions': hardened,
             'vm_pack_bytecode': hardened,
             'vm_pack_constants': False,
+            'vm_whiten_constants': hardened,
         }
         for name,value in defaults.items():
             if getattr(self,name) is None:

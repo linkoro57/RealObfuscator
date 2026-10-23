@@ -20,8 +20,9 @@ class ConstantPool:
 
     PACKING_THRESHOLD = 16
 
-    def __init__(self, rng: random.Random):
+    def __init__(self, rng: random.Random, whiten: bool = False):
         self.rng = rng
+        self.whiten = whiten
         self.constants: List[Any] = []
         self._index: Dict[Any, int] = {}
         # Per-build repeating XOR key (4-16 bytes)
@@ -52,19 +53,23 @@ class ConstantPool:
 
     # ---- Encryption ----
 
-    def encrypt_string(self, s: str) -> str:
-        """Return an escaped Luau string body with repeating multi-byte XOR."""
-        klen = len(self.key)
-        out_chars = []
-        for i, byte in enumerate(s.encode('utf-8','surrogateescape')):
-            k = self.key[i % klen]
-            out_chars.append(f"\\{byte ^ k:03d}")
-        return ''.join(out_chars)
+    def encrypt_string(self, s: str, index: int = 1) -> str:
+        """Return an escaped Luau string body for the encrypted bytes."""
+        return ''.join(f"\\{byte:03d}" for byte in self.encrypt_bytes(s, index))
 
-    def encrypt_bytes(self, s: str) -> bytes:
-        """Return the encrypted UTF-8 bytes used by the runtime constant pool."""
+    def encrypt_bytes(self, s: str, index: int = 1) -> bytes:
+        """Encrypt UTF-8 bytes, optionally whitening each pool position."""
         raw = s.encode('utf-8', 'surrogateescape')
-        return bytes(byte ^ self.key[i % len(self.key)] for i, byte in enumerate(raw))
+        encrypted = []
+        klen = len(self.key)
+        for offset, byte in enumerate(raw):
+            position = offset + 1
+            value = byte ^ self.key[offset % klen]
+            if self.whiten:
+                secondary = self.key[(index + position * 3 - 2) % klen]
+                value ^= (index * 131 + position * 17 + secondary) % 256
+            encrypted.append(value)
+        return bytes(encrypted)
 
     # ---- Luau emission ----
 
@@ -78,13 +83,12 @@ class ConstantPool:
 
     def encoded_values(self, encode_numbers=False):
         values, pending = [], []
-        for value in self.constants:
+        for index, value in enumerate(self.constants, 1):
             numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
             kind = 2 if numeric and encode_numbers else (1 if isinstance(value, str) else 0)
             text = self.number_text(value) if kind == 2 else value
             if kind:
-                raw = text.encode('utf-8', 'surrogateescape')
-                value = bytes(b ^ self.key[i % len(self.key)] for i,b in enumerate(raw))
+                value = self.encrypt_bytes(text, index)
             values.append(value)
             pending.append(kind)
         return values, pending
@@ -92,7 +96,7 @@ class ConstantPool:
     def to_luau_table(self, encode_numbers=False, unpacker=None) -> str:
         """Generate a Luau table literal containing the (encrypted) constants."""
         entries = []
-        for c in self.constants:
+        for index, c in enumerate(self.constants, 1):
             if c is None:
                 entries.append("nil")
             elif isinstance(c, bool):
@@ -100,12 +104,12 @@ class ConstantPool:
             elif isinstance(c, (int, float)):
                 if encode_numbers:
                     text = self.number_text(c)
-                    encrypted = self.encrypt_bytes(text)
+                    encrypted = self.encrypt_bytes(text, index)
                     if unpacker and len(encrypted) >= self.PACKING_THRESHOLD:
                         packed = base64.b64encode(encrypted).decode('ascii')
                         entries.append(f'{unpacker}("{packed}")')
                     else:
-                        entries.append(f'"{self.encrypt_string(text)}"')
+                        entries.append(f'"{self.encrypt_string(text, index)}"')
                     continue
                 if not math.isfinite(c):
                     entries.append('(0/0)' if math.isnan(c) else ('(-1/0)' if c < 0 else '(1/0)'))
@@ -116,12 +120,12 @@ class ConstantPool:
                 else:
                     entries.append(repr(float(c)))
             elif isinstance(c, str):
-                encrypted = self.encrypt_bytes(c)
+                encrypted = self.encrypt_bytes(c, index)
                 if unpacker and len(encrypted) >= self.PACKING_THRESHOLD:
                     packed = base64.b64encode(encrypted).decode('ascii')
                     entries.append(f'{unpacker}("{packed}")')
                 else:
-                    entries.append(f'"{self.encrypt_string(c)}"')
+                    entries.append(f'"{self.encrypt_string(c, index)}"')
             else:
                 entries.append("nil")
         return '{' + ','.join(entries) + '}'

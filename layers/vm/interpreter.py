@@ -269,6 +269,17 @@ end'''
 
     def _gen_constant_pool(self, n: Dict[str, str]) -> str:
         numeric = self.config.vm_encode_numbers
+        whiten_partitioned = ''
+        whiten_shared = ''
+        if self.config.vm_whiten_constants:
+            whiten_partitioned = (
+                f"local _w=_p.ck[(_i+_j*3-2)%#_p.ck+1];"
+                f"_vbyte={n['bxor']}(_vbyte,(_i*131+_j*17+_w)%256);"
+            )
+            whiten_shared = (
+                f"local _w={n['ck']}[({n['i']}+{n['j']}*3-2)%{n['ckn']}+1];"
+                f"_vbyte={n['bxor']}(_vbyte,({n['i']}*131+{n['j']}*17+_w)%256);"
+            )
         number_helper = ''
         if numeric:
             number_helper = f'''local function {n['number']}(_v)
@@ -284,7 +295,8 @@ for _i,_kind in pairs(_p.pending) do
 local _v=_p.k[_i]
 local _s={{}}
 for _j=1,#_v do
-_s[_j]=string.char({n['bxor']}(string.byte(_v,_j),_p.ck[(_j-1)%#_p.ck+1]))
+local _vbyte={n['bxor']}(string.byte(_v,_j),_p.ck[(_j-1)%#_p.ck+1]);
+{whiten_partitioned}_s[_j]=string.char(_vbyte)
 end
 _v=table.concat(_s);{convert}_p.k[_i]=_v
 end
@@ -307,7 +319,8 @@ local _kind={n['pending']}[{n['i']}]
 if _kind then
 local {n['tmp2']}={{}}
 for {n['j']}=1,#{n['tmp']} do
-{n['tmp2']}[{n['j']}]=string.char({n['bxor']}(string.byte({n['tmp']},{n['j']}),{n['ck']}[({n['j']}-1)%{n['ckn']}+1]))
+local _vbyte={n['bxor']}(string.byte({n['tmp']},{n['j']}),{n['ck']}[({n['j']}-1)%{n['ckn']}+1]);
+{whiten_shared}{n['tmp2']}[{n['j']}]=string.char(_vbyte)
 end
 {n['tmp']}=table.concat({n['tmp2']})
 {f"if _kind==2 then {n['tmp']}={n['number']}({n['tmp']}) end" if numeric else ''}
