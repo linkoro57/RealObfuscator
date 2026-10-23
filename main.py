@@ -122,6 +122,7 @@ def main(source, input_path, output_path, mode, level, vm, antitamper, strings,
         if not config.virtualize:
             raise click.UsageError('--vm-packed/--vm-unpacked requires --mode vm, --vm, or --level 4.')
         config.vm_pack_bytecode = vm_packed
+        config.vm_pack_constants = vm_packed
 
     directory_name = input_p.resolve() if input_p.is_dir() else None
     output_suffix = input_p.suffix if input_p.suffix.lower() in {'.lua', '.luau'} else '.luau'

@@ -149,8 +149,10 @@ return 5050,0,-0.0,0.1,1.2345678901234567,9007199254740991,
 local a=table.pack(f());a[a.n+1]=1/a[3];a.n+=1;return table.unpack(a,1,a.n)''')
 
     def test_payload_corruption(self):
-        source='local function unused() return 9917 end;return 5050,"private-text",false,nil'
-        output=Obfuscator(ObfuscationConfig(virtualize=True,vm_hardening='max',seed=12345)).obfuscate(source)
+        source='local function unused() return 9917 end;return 5050,"private-text-long-enough",false,nil'
+        output=Obfuscator(ObfuscationConfig(
+            virtualize=True,vm_hardening='max',vm_pack_constants=True,seed=12345,
+        )).obfuscate(source)
         self.assertEqual(run(output),run(source))
         packed=re.search(r'bc=\w+\("([A-Za-z0-9+/])',output)
         self.assertIsNotNone(packed)
@@ -158,9 +160,16 @@ local a=table.pack(f());a[a.n+1]=1/a[3];a.n+=1;return table.unpack(a,1,a.n)''')
         damaged=output[:packed.start(1)]+replacement+output[packed.end(1):]
         with self.assertRaisesRegex(AssertionError,'integrity check failed'):
             run(damaged)
+        packed_constant=re.search(r'(?<!\w)k=\{[^}]*?\w+\("([A-Za-z0-9+/])',output)
+        self.assertIsNotNone(packed_constant)
+        replacement='B' if packed_constant[1]!='B' else 'C'
+        damaged=(output[:packed_constant.start(1)]+replacement
+                 +output[packed_constant.end(1):])
+        with self.assertRaisesRegex(AssertionError,'integrity check failed'):
+            run(damaged)
         fields=[r'bk=\{q=\{(\d+)', r'ck=\{q=\{(\d+)',
                 r'\},s=(\d+)', r'kc=(\d+)', r'np=(\d+)', r'ms=(\d+)', r'sp=\{(\d+)',
-                r'pending=\{\[\d+\]=([12])', r'(?<!\w)k=\{[^}]*?\\(\d{3})']
+                r'pending=\{\[\d+\]=([12])']
         for pattern in fields:
             match=re.search(pattern,output)
             self.assertIsNotNone(match,pattern)
@@ -178,6 +187,20 @@ local a=table.pack(f());a[a.n+1]=1/a[3];a.n+=1;return table.unpack(a,1,a.n)''')
         )).obfuscate(source)
         unpacked=Obfuscator(ObfuscationConfig(
             virtualize=True,vm_hardening='max',vm_pack_bytecode=False,seed=12345,
+        )).obfuscate(source)
+        self.assertLess(len(packed),len(unpacked))
+        self.assertEqual(run(packed),run(source))
+
+    def test_packed_constants_reduce_string_heavy_output(self):
+        strings=','.join(f'"protected-value-{i:03d}-abcdefghijklmno"' for i in range(120))
+        source=f'local values={{{strings}}};return values[1],values[120]'
+        packed=Obfuscator(ObfuscationConfig(
+            virtualize=True,vm_hardening='max',vm_pack_bytecode=False,
+            vm_pack_constants=True,seed=12345,
+        )).obfuscate(source)
+        unpacked=Obfuscator(ObfuscationConfig(
+            virtualize=True,vm_hardening='max',vm_pack_bytecode=False,
+            vm_pack_constants=False,seed=12345,
         )).obfuscate(source)
         self.assertLess(len(packed),len(unpacked))
         self.assertEqual(run(packed),run(source))

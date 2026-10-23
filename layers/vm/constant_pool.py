@@ -9,6 +9,7 @@ pool as strings. The interpreter decodes each function pool once, preserving
 direct numeric lookups afterward.
 """
 
+import base64
 import math
 import random
 from typing import List, Any, Dict
@@ -16,6 +17,8 @@ from typing import List, Any, Dict
 
 class ConstantPool:
     """Manages deduplicated literal constants for a VM build."""
+
+    PACKING_THRESHOLD = 16
 
     def __init__(self, rng: random.Random):
         self.rng = rng
@@ -58,6 +61,11 @@ class ConstantPool:
             out_chars.append(f"\\{byte ^ k:03d}")
         return ''.join(out_chars)
 
+    def encrypt_bytes(self, s: str) -> bytes:
+        """Return the encrypted UTF-8 bytes used by the runtime constant pool."""
+        raw = s.encode('utf-8', 'surrogateescape')
+        return bytes(byte ^ self.key[i % len(self.key)] for i, byte in enumerate(raw))
+
     # ---- Luau emission ----
 
     def number_text(self, value) -> str:
@@ -81,7 +89,7 @@ class ConstantPool:
             pending.append(kind)
         return values, pending
 
-    def to_luau_table(self, encode_numbers=False) -> str:
+    def to_luau_table(self, encode_numbers=False, unpacker=None) -> str:
         """Generate a Luau table literal containing the (encrypted) constants."""
         entries = []
         for c in self.constants:
@@ -91,7 +99,13 @@ class ConstantPool:
                 entries.append("true" if c else "false")
             elif isinstance(c, (int, float)):
                 if encode_numbers:
-                    entries.append(f'"{self.encrypt_string(self.number_text(c))}"')
+                    text = self.number_text(c)
+                    encrypted = self.encrypt_bytes(text)
+                    if unpacker and len(encrypted) >= self.PACKING_THRESHOLD:
+                        packed = base64.b64encode(encrypted).decode('ascii')
+                        entries.append(f'{unpacker}("{packed}")')
+                    else:
+                        entries.append(f'"{self.encrypt_string(text)}"')
                     continue
                 if not math.isfinite(c):
                     entries.append('(0/0)' if math.isnan(c) else ('(-1/0)' if c < 0 else '(1/0)'))
@@ -102,7 +116,12 @@ class ConstantPool:
                 else:
                     entries.append(repr(float(c)))
             elif isinstance(c, str):
-                entries.append(f'"{self.encrypt_string(c)}"')
+                encrypted = self.encrypt_bytes(c)
+                if unpacker and len(encrypted) >= self.PACKING_THRESHOLD:
+                    packed = base64.b64encode(encrypted).decode('ascii')
+                    entries.append(f'{unpacker}("{packed}")')
+                else:
+                    entries.append(f'"{self.encrypt_string(c)}"')
             else:
                 entries.append("nil")
         return '{' + ','.join(entries) + '}'

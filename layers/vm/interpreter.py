@@ -113,8 +113,8 @@ class InterpreterGenerator:
 
         # 1. Compatibility shims
         parts.append(self._gen_compat_shims(names))
-        if self.config.vm_pack_bytecode:
-            parts.append(self._gen_bytecode_unpacker(names))
+        if self.config.vm_pack_bytecode or self.config.vm_pack_constants:
+            parts.append(self._gen_payload_unpackers(names))
         if self.config.vm_dynamic_keys or self.config.vm_integrity_check:
             parts.append(self._gen_payload_helpers(names))
 
@@ -210,7 +210,7 @@ class InterpreterGenerator:
             'hashstep', 'hashuint', 'hashblob', 'hashkey', 'hashvalue',
             'hashpool', 'hashproto', 'salt', 'unkey', 'number',
             'decode',
-            'unpackbc',
+            'unpackbc', 'unpackstr',
         ]
         out = {}
         for k in keys:
@@ -238,15 +238,17 @@ local {n['unpack']}=unpack or table.unpack
 local {n['env']}=(getfenv and getfenv()) or _G
 local {n['pack']}=table.pack or function(...) return {{n=select("#",...),...}} end"""
 
-    def _gen_bytecode_unpacker(self, n: Dict[str, str]) -> str:
-        """Decode a compact Base64 byte stream into the VM's byte table."""
-        return f'''local function {n['unpackbc']}(_s)
-local _a="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    def _gen_payload_unpackers(self, n: Dict[str, str]) -> str:
+        """Decode compact Base64 payloads into byte tables or binary strings."""
+        return f'''local _b64="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local _b64map={{}}
+for _i=1,#_b64 do _b64map[string.byte(_b64,_i)]=_i-1 end
+local function {n['unpackbc']}(_s)
 local _out={{}};local _buffer=0;local _bits=0
 for _i=1,#_s do
-local _p=string.find(_a,string.sub(_s,_i,_i),1,true)
-if _p then
-_buffer=_buffer*64+_p-1;_bits=_bits+6
+local _p=_b64map[string.byte(_s,_i)]
+if _p~=nil then
+_buffer=_buffer*64+_p;_bits=_bits+6
 if _bits>=8 then
 _bits=_bits-8;_out[#_out+1]=math.floor(_buffer/(2^_bits))%256
 _buffer=_buffer%(2^_bits)
@@ -254,6 +256,11 @@ end
 end
 end
 return _out
+end
+local function {n['unpackstr']}(_s)
+local _bytes={n['unpackbc']}(_s)
+for _i=1,#_bytes do _bytes[_i]=string.char(_bytes[_i]) end
+return table.concat(_bytes)
 end'''
 
     # =================================================================
@@ -285,7 +292,8 @@ _p.pending=nil;_p.ck=nil;_p.ready=true
 {'_p.ks=nil' if not self.config.vm_predecode_bytecode or not self.config.vm_per_proto_keys else ''}
 end"""
         key_entries = self._gen_key_table(self.pool.key, n, self._root_salt)
-        consts_table = self.pool.to_luau_table(numeric)
+        unpacker = n['unpackstr'] if self.config.vm_pack_constants else None
+        consts_table = self.pool.to_luau_table(numeric, unpacker)
         _, kinds = self.pool.encoded_values(numeric)
         pending = ','.join(f'[{i+1}]={kind}' for i,kind in enumerate(kinds) if kind)
         return number_helper + f"""local {n['ck']}={key_entries}
@@ -394,7 +402,8 @@ local {n['bkn']}=#{n['bk']}"""
                 pool = p.constant_pool
                 _, kinds = pool.encoded_values(self.config.vm_encode_numbers)
                 pending = ','.join(f'[{j+1}]={kind}' for j,kind in enumerate(kinds) if kind)
-                pool_field = (f",k={pool.to_luau_table(self.config.vm_encode_numbers)},ck={self._gen_key_table(pool.key,n,salt)},"
+                unpacker = n['unpackstr'] if self.config.vm_pack_constants else None
+                pool_field = (f",k={pool.to_luau_table(self.config.vm_encode_numbers,unpacker)},ck={self._gen_key_table(pool.key,n,salt)},"
                               f"kc={pool.size()},pending={{{pending}}}")
             key_field = f",bk={self._gen_key_table(p.bytecode_key,n,salt)}" if self.config.vm_per_proto_keys else ''
             digest = PayloadHash(self.hash_seed,self.hash_multiplier)
