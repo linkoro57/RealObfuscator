@@ -9,46 +9,28 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11", "3.13"]
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Install project
-        run: python -m pip install .
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
 
-      - name: Install Luau runtime
-        run: |
-          mkdir -p tests/runtime/0.741
-          curl --fail --location --retry 3 \
-            https://github.com/luau-lang/luau/releases/download/0.741/luau-ubuntu.zip \
-            --output /tmp/luau.zip
-          echo "134dc762ad26232af83e43f98dec03ff6030dd3a4452f9408b9d50ccea025503  /tmp/luau.zip" \
-            | sha256sum --check
-          unzip -q /tmp/luau.zip -d tests/runtime/0.741
-          chmod +x tests/runtime/0.741/luau
+      - name: Run tests
+        run: cargo test --all-targets --locked
 
-      - name: Compile Python sources
-        run: >-
-          python -m compileall -q
-          config.py main.py obfuscator.py version.py
-          layers luau_parser utils tests
+      - name: Build release executable
+        run: cargo build --release --locked
 
-      - name: Run unit tests
-        run: python -m unittest discover -s tests -v
-        env:
-          REALOBFUSCATOR_REQUIRE_RUNTIME: "1"
-
-      - name: Smoke-test installed command
-        run: realobfuscator --version
+      - name: Smoke-test command
+        shell: bash
+        run: cargo run --locked -- --version

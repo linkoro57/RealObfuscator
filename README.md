@@ -4,15 +4,14 @@
 
 ### A layered Luau obfuscator built for Roblox projects
 
-Transform readable Luau into hardened native code or build-specific virtualized bytecode — directly from the command line.
+Transform readable Luau into protected code directly from a fast, standalone Rust command-line application.
 
-[![Tests](https://github.com/linkoro57/RealObfuscator/actions/workflows/tests.yml/badge.svg)](https://github.com/linkoro57/RealObfuscator/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/version-1.6.0-7c3aed.svg)](https://github.com/linkoro57/RealObfuscator)
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.11%20%7C%203.13-3776ab.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Luau](https://img.shields.io/badge/Luau-tested-00a2ff.svg)](https://luau.org/)
+[![Version](https://img.shields.io/badge/version-2.0.0-7c3aed.svg)](https://github.com/linkoro57/RealObfuscator)
+[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org/)
+[![Luau](https://img.shields.io/badge/Luau-0.741-00a2ff.svg)](https://luau.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)](LICENSE)
 
-[Quick start](#-quick-start) · [Protection modes](#-protection-modes) · [VM hardening](#-vm-hardening) · [Library API](#-library-api) · [Tests](#-tests)
+[Quick start](#-quick-start) · [Protection modes](#️-protection-modes) · [Library API](#-library-api) · [Tests](#-tests)
 
 </div>
 
@@ -21,29 +20,27 @@ Transform readable Luau into hardened native code or build-specific virtualized 
 
 ## ✨ Highlights
 
-| 🔐 Layered protection | ⚙️ Custom virtual machine | 🎲 Build diversification |
+| 🔐 Layered protection | ⚡ Native executable | 🎲 Build diversification |
 | :--- | :--- | :--- |
-| Identifier renaming, string and number encoding, control-flow transformations, dead code, indirection, and integrity checks. | Compiles Luau into encrypted bytecode interpreted by a generated, build-specific runtime. | Private random seeds, shuffled opcodes, operand layouts, aliases, keys, handlers, and constant pools vary between builds. |
+| Identifier renaming, string encoding, number transformations, minification, and build signatures. | A standalone Rust executable with no Python runtime or third-party Rust dependency. | Private random seeds and generated identifiers vary between release builds. |
 
-| 🧩 Hardened constants | 📦 Compact payloads | 🧪 Runtime-tested |
+| 🧩 Luau-aware lexer | 📁 Project processing | 🧪 Runtime-tested |
 | :--- | :--- | :--- |
-| Constants use evolving per-value whitening derived from their key, index, position, and length. | Optional Base64 packing reduces large bytecode and encrypted-constant representations. | The test suite executes generated programs with the official Luau runtime across supported Python versions. |
+| Preserves strings and directives while rejecting unsupported syntax instead of silently changing it. | Recursively processes `.lua` and `.luau` files while preserving relative paths. | Generated code can be checked with the bundled official Luau 0.741 runtime. |
 
 ## 🚀 Quick start
 
-### 1. Install
+### 1. Build
+
+Install the stable Rust toolchain, clone the repository, and compile the release binary:
 
 ```bash
 git clone https://github.com/linkoro57/RealObfuscator.git
 cd RealObfuscator
-python -m pip install -r requirements.txt
+cargo build --release
 ```
 
-Optionally install the `realobfuscator` command system-wide or in a virtual environment:
-
-```bash
-python -m pip install .
-```
+The executable is written to `target/release/realobfuscator` (`realobfuscator.exe` on Windows).
 
 ### 2. Obfuscate
 
@@ -51,14 +48,14 @@ python -m pip install .
 # Fast default protection
 realobfuscator script.luau
 
-# Maximum VM protection
-realobfuscator script.luau --mode vm
+# Native protection profile
+realobfuscator script.luau --mode native
 
 # Choose the output path
-realobfuscator script.luau --mode vm --output build/script.luau
+realobfuscator script.luau --output build/script.luau
 ```
 
-The default output is `script.obf.luau`. Without package installation, replace `realobfuscator` with `python main.py`.
+The default output is `script.obf.luau`.
 
 ### 3. Process a project
 
@@ -72,26 +69,22 @@ Directories are processed recursively. Only `.lua` and `.luau` files are transfo
 
 ```mermaid
 flowchart LR
-    A[Luau source] --> B[Parse and analyze]
-    B --> C{Protection mode}
-    C -->|Lightweight| D[Rename + encode]
-    C -->|Native| E[Native transforms]
-    C -->|VM| F[Compile to custom bytecode]
-    E --> G[Control flow + anti-tamper]
-    F --> H[Encrypt + diversify + pack]
-    D --> I[Protected Luau]
-    G --> I
-    H --> I
+    A[Luau source] --> B[Lex and validate]
+    B --> C[Remove comments and type aliases]
+    C --> D[Rename local identifiers]
+    D --> E[Encode strings and numbers]
+    E --> F[Minify output]
+    F --> G[Protected Luau]
 ```
 
-## 🎚️ Protection modes
+## 🎛️ Protection modes
 
-| Mode | Speed | Output size | Protection | Best suited for |
-| :--- | :---: | :---: | :---: | :--- |
-| `rename` | ⚡⚡⚡ | Small | ●○○○ | Development builds and simple symbol cleanup |
-| `lightweight` | ⚡⚡⚡ | Small | ●●○○ | Scripts where startup speed and size matter most |
-| `native` | ⚡⚡ | Medium | ●●●○ | Stronger protection without a virtual machine |
-| `vm` | ⚡ | Large | ●●●● | Sensitive logic where resistance to static analysis is the priority |
+| Mode | Speed | Output size | Purpose |
+| :--- | :---: | :---: | :--- |
+| `rename` | ⚡⚡⚡ | Small | Rename local identifiers and minify the source. |
+| `lightweight` | ⚡⚡⚡ | Small | Rename identifiers and encode strings. This is the default. |
+| `native` | ⚡⚡ | Medium | Enable the complete native transformation profile. |
+| `vm` | ⚡⚡ | Medium | Use the VM-compatible hardened configuration and VM build signature. |
 
 ```bash
 realobfuscator script.luau --mode rename
@@ -100,91 +93,56 @@ realobfuscator script.luau --mode native
 realobfuscator script.luau --mode vm
 ```
 
-> [!TIP]
-> Start with `lightweight` or `native`. Use `vm` selectively for sensitive modules, because virtualization trades runtime speed and output size for stronger protection.
-
-## 🖥️ VM hardening
-
-Every hardened VM build receives a different runtime layout. The maximum profile combines:
-
-- build-specific opcode values and aliases;
-- diversified operand layouts and handler variants;
-- random-access bytecode whitening derived from position, prototype length, and multiple key bytes;
-- per-prototype keys and partitioned constant pools;
-- fused instructions and generated superinstructions;
-- payload integrity verification;
-- lazy decoding of encrypted string and numeric constants;
-- evolving constant whitening that separates identical positions and shared prefixes;
-- compact bytecode representation by default.
-
-### Rolling or cached bytecode
-
-```bash
-# Stronger default: decode while reading
-realobfuscator script.luau --mode vm --vm-rolling
-
-# Faster execution: decode once per function
-realobfuscator script.luau --mode vm --vm-cached
-```
-
-### Packed or unpacked payloads
-
-```bash
-# Also pack encrypted constants for smaller output
-realobfuscator script.luau --mode vm --vm-packed
-
-# Keep bytecode and constants as unpacked tables/strings
-realobfuscator script.luau --mode vm --vm-unpacked
-```
-
-Show the complete set of advanced options and compatibility aliases:
+Show compatibility flags and advanced settings with:
 
 ```bash
 realobfuscator --help-all
 ```
 
-## 🐍 Library API
+## 🦀 Library API
 
-```python
-from config import ObfuscationConfig, ProtectionLevel
-from obfuscator import Obfuscator
+```rust
+use realobfuscator::{ObfuscationConfig, Obfuscator, ProtectionLevel};
 
-config = ObfuscationConfig(level=ProtectionLevel.PARANOID)
-source = 'print("Hello, Roblox!")'
-protected = Obfuscator(config).obfuscate(source)
-
-with open("script.obf.luau", "w", encoding="utf-8") as output:
-    output.write(protected)
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ObfuscationConfig::default()
+        .with_seed(12345)
+        .with_level(ProtectionLevel::Maximum);
+    let source = r#"print("Hello, Roblox!")"#;
+    let protected = Obfuscator::new(config).obfuscate(source)?;
+    std::fs::write("script.obf.luau", protected)?;
+    Ok(())
+}
 ```
 
 | Level | Pipeline |
 | :--- | :--- |
-| `MINIMAL` | Identifier, string, and number transformations |
-| `STANDARD` | Minimal layers plus control flow, predicates, and dead code |
-| `MAXIMUM` | Standard layers plus indirection and anti-tamper checks |
-| `PARANOID` | Maximum-hardened custom VM pipeline |
+| `Minimal` | Identifier and string transformations. |
+| `Standard` | Minimal profile plus standard hardening settings. |
+| `Maximum` | Complete native profile. |
+| `Paranoid` | VM-compatible hardened profile. |
 
-For reproducible development builds, provide `seed=...`. Omit the seed for releases so RealObfuscator uses private operating-system randomness.
+For reproducible development builds, call `.with_seed(...)`. Omit the seed for release builds so RealObfuscator uses private process randomness.
 
 ## 🧪 Tests
 
 ```bash
-python -m unittest discover -s tests -v
+cargo test
 ```
 
-GitHub Actions tests every push and pull request on Python 3.9, 3.11, and 3.13. Runtime tests use the official [Luau 0.741 tools](https://github.com/luau-lang/luau/releases/tag/0.741).
+Build an optimized executable with:
 
-Place the executable in `tests/runtime/0.741/` or set `LUAU_BIN`. To make a missing runtime fail the suite:
-
-```powershell
-$env:REALOBFUSCATOR_REQUIRE_RUNTIME = "1"
-python -m unittest discover -s tests -v
+```bash
+cargo build --release
 ```
+
+The repository retains `luau.exe` and `luau-compile.exe` under `tests/runtime/0.741` for manual runtime and syntax checks.
 
 ## ⚠️ Scope and limitations
 
 - RealObfuscator targets Luau and Roblox-oriented workflows.
-- Virtualized code has a runtime and size cost; benchmark it on the target device.
+- Backtick-interpolated strings are currently rejected.
+- Test generated scripts on the target device before publishing them.
 - No client-side obfuscator can guarantee secrecy against a determined attacker.
 - Server-authoritative design remains the primary protection for valuable game logic and data.
 
@@ -197,3 +155,4 @@ Distributed under the [GNU General Public License v3.0](LICENSE).
 **Protect the implementation. Keep the behavior.**
 
 </div>
+
