@@ -106,6 +106,7 @@ fn profiles() -> Vec<ObfuscationConfig> {
     unrenamed.rename_identifiers = false;
     unrenamed.minify = false;
     unrenamed.anti_tamper = false;
+    unrenamed.opaque_predicates = true;
     unrenamed.dead_code_density = DeadCodeDensity::High;
     profiles.push(unrenamed);
     let mut typed = ObfuscationConfig::default()
@@ -134,6 +135,74 @@ fn profiles() -> Vec<ObfuscationConfig> {
 }
 
 const CASES: &[(&str, &str)] = &[
+    (
+        "method_closure_cells",
+        r#"
+        local shared=0
+        local function build(...)
+            local callbacks={}
+            local receiver={}
+            function receiver:save(options,...)
+                callbacks[#callbacks+1]=options.callback
+                return options.callback(1),...
+            end
+            for i=1,3 do
+                local value=i*10
+                print(receiver:save({callback=function(delta)
+                    value+=delta;shared+=1
+                    local i=i+5
+                    local object={value=i}
+                    function object:read(value) return self.value,value end
+                    return value,object:read(delta)
+                end},...))
+                value+=2
+            end
+            return callbacks
+        end
+        local callbacks=build('tail',nil,9)
+        print(callbacks[1](4));print(callbacks[3](2));print(callbacks[1](3));print(shared)
+        local function setup()
+            local saved
+            local object={}
+            local function original(self,callback,...)
+                saved=callback
+                print('original',...)
+                return callback
+            end
+            local function replacement(self,callback,...)
+                saved=callback
+                print('replacement',...)
+                return callback
+            end
+            object.save=original
+            local function change()
+                object.save=replacement
+                return nil,7
+            end
+            local value=20
+            local callback=object:save(function(value)
+                local self={value=value}
+                return function() return self.value end
+            end,change())
+            print(saved==callback,callback(8)(),value)
+            return saved
+        end
+        print(setup()(13)())
+        local function yielding()
+            local object={}
+            function object:call(callback,...) return callback(...),nil,5 end
+            local x=1
+            return object:call(function(delta)
+                x+=delta
+                coroutine.yield(x)
+                x+=1
+                return x
+            end,4)
+        end
+        local thread=coroutine.create(yielding)
+        print(coroutine.resume(thread));print(coroutine.resume(thread))
+    "#,
+    ),
     (
         "closure_cells",
         r#"
@@ -420,7 +489,12 @@ fn all_profiles_preserve_runtime_behavior() {
             "invalid fixture {name}: {}",
             String::from_utf8_lossy(&expected.stderr)
         );
-        for (i, config) in profiles().into_iter().enumerate() {
+        for (i, mut config) in profiles().into_iter().enumerate() {
+            if *name == "method_closure_cells" && config.virtualize && config.virtualize_chunk {
+                // A semantic test must not pass by silently retaining the native chunk.
+                config.require_chunk_vm = true;
+                config.require_function_vm = true;
+            }
             let output = Obfuscator::new(config)
                 .obfuscate_with_report(source)
                 .unwrap();

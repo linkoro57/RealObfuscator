@@ -401,7 +401,10 @@ impl Compiler {
             // Keep the complete colon call native, including argument evaluation.
             // Extracting a method or delaying NAMECALL until after arguments changes
             // lookup order and can break Roblox userdata behavior.
-            let mut expression: Expression = call.clone().into();
+            let mut wrapper = Block::from(ReturnStatement::one(call.clone()));
+            let resources = Resources::from_memory();
+            let context = ContextBuilder::new("method.luau", &resources, "").build();
+            ConvertFunctionToAssign::default().flawless_process(&mut wrapper, &context);
             let bindings = self
                 .scopes
                 .iter()
@@ -411,24 +414,41 @@ impl Compiler {
                         .map(|(name, register)| (name.clone(), *register))
                 })
                 .collect();
-            let mut bridge = Bridge {
+            let mut capture = Capture {
                 parameter: self.bridge_parameter.clone(),
                 bindings,
+                masks: Vec::new(),
+                cells: BTreeSet::new(),
+                unsupported: false,
                 nested_closure: false,
                 introspection: false,
             };
-            DefaultVisitor::visit_expression(&mut expression, &mut bridge);
-            if bridge.introspection {
+            ScopeVisitor::visit_block(&mut wrapper, &mut capture);
+            if capture.introspection {
                 return Err("environment or stack introspection");
             }
-            if bridge.nested_closure {
-                return Err("nested closures in native method arguments");
+            if capture.unsupported {
+                return Err("type functions in method bridges");
             }
-            let body = syntax::generate(&Block::from(ReturnStatement::one(expression)), true);
-            let external = self.external_code(
-                format!("method:{}", self.external.len()),
-                format!("function({},...){body} end", self.bridge_parameter),
-            );
+            let body = syntax::generate(&wrapper, true);
+            // Escaping callbacks must retain the cells from this invocation, not
+            // a live register map whose loop-local cells can later be replaced.
+            // Snapshot cell references only: assignments stay shared with the VM.
+            let factory = if capture.nested_closure {
+                let cells = capture
+                    .cells
+                    .iter()
+                    .map(|cell| format!("[{cell}]={}[{cell}]", self.callback_parameter))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "function({},...)local {}={{{cells}}};{body} end",
+                    self.callback_parameter, self.bridge_parameter
+                )
+            } else {
+                format!("function({},...){body} end", self.bridge_parameter)
+            };
+            let external = self.external_code(format!("method:{}", self.external.len()), factory);
             let result = self.reg();
             self.emit(Op::Native, result, external, u32::from(many));
             self.native_bridges += 1;
@@ -502,10 +522,15 @@ impl Compiler {
             masks: Vec::new(),
             cells: BTreeSet::new(),
             unsupported: false,
+            nested_closure: false,
+            introspection: false,
         };
         ScopeVisitor::visit_block(&mut wrapper, &mut capture);
         if capture.unsupported {
             return Err("type functions in closure factories");
+        }
+        if capture.introspection {
+            return Err("environment or stack introspection");
         }
         let rendered = syntax::generate(&wrapper, true);
         let factory = format!("function({}){rendered} end", self.bridge_parameter);
@@ -1212,6 +1237,8 @@ struct Capture {
     masks: Vec<HashSet<String>>,
     cells: BTreeSet<u32>,
     unsupported: bool,
+    nested_closure: bool,
+    introspection: bool,
 }
 impl Capture {
     fn reference(&mut self, name: &Identifier) -> Option<IndexExpression> {
@@ -1223,7 +1250,12 @@ impl Capture {
         {
             return None;
         }
-        let register = *self.bindings.get(name.get_name())?;
+        let Some(&register) = self.bindings.get(name.get_name()) else {
+            if matches!(name.get_name().as_str(), "getfenv" | "setfenv" | "debug") {
+                self.introspection = true;
+            }
+            return None;
+        };
         self.cells.insert(register);
         Some(IndexExpression::new(
             IndexExpression::new(Prefix::from_name(self.parameter.as_str()), register as f64),
@@ -1255,6 +1287,9 @@ impl Scope for Capture {
     }
 }
 impl NodeProcessor for Capture {
+    fn process_function_expression(&mut self, _: &mut FunctionExpression) {
+        self.nested_closure = true;
+    }
     fn process_type_function(&mut self, _: &mut TypeFunctionStatement) {
         self.unsupported = true;
     }

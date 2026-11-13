@@ -36,6 +36,7 @@ pub struct ObfuscationConfig {
     pub cache_strings: bool,
     pub obfuscate_numbers: bool,
     pub control_flow_flatten: bool,
+    /// Legacy arithmetic noise; disabled by presets because it is readily simplified.
     pub opaque_predicates: bool,
     pub inject_dead_code: bool,
     pub table_indirection: bool,
@@ -77,7 +78,7 @@ impl Default for ObfuscationConfig {
             cache_strings: true,
             obfuscate_numbers: true,
             control_flow_flatten: true,
-            opaque_predicates: true,
+            opaque_predicates: false,
             inject_dead_code: true,
             table_indirection: true,
             anti_tamper: true,
@@ -122,7 +123,7 @@ impl ObfuscationConfig {
         self.encrypt_strings = n >= 1;
         self.obfuscate_numbers = n >= 1;
         self.control_flow_flatten = n >= 2;
-        self.opaque_predicates = n >= 2;
+        self.opaque_predicates = false;
         self.inject_dead_code = n >= 2;
         self.table_indirection = n >= 3;
         self.anti_tamper = n >= 3;

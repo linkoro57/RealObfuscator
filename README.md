@@ -1,6 +1,6 @@
 # RealObfuscator
 
-A Rust command-line obfuscator for Luau and Roblox projects. Version **2.2.0** adds a private register-bytecode compiler for supported main chunks and functions, captured-variable cells, shuffled instruction records, opcode aliases, fused operations, lazy constants and per-record integrity checks to the AST-based native pipeline.
+A Rust command-line obfuscator for Luau and Roblox projects. Version **2.2.1** supports captured callbacks inside native method arguments without forcing whole-chunk fallback, makes fallback warnings visible without `--stats`, and disables trivial arithmetic predicates in all presets. The register-bytecode backend supports main chunks and functions, captured-variable cells, shuffled instruction records, opcode aliases, fused operations, lazy constants and per-record integrity checks.
 
 The [public Luraph research inventory](docs/luraph-research.md) links the GitHub, original technical analysis, Reddit discussion and official historical documentation consulted, and distinguishes implemented techniques, compatibility bridges and unknown/private features. It is not a claim of reproducing every Luraph protection.
 
@@ -30,16 +30,20 @@ On Windows the executable is `target/release/realobfuscator.exe`. Default file o
 | --- | --- |
 | `rename` | Rename local bindings and parameters, preserve global/member names, minify. |
 | `lightweight` (default) | Rename plus a shuffled, deduplicated string pool and eager cached decoding. |
-| `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch, opaque predicates and decoy handlers. |
+| `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch and decoy handlers. |
 | `vm` | Register-bytecode compilation for supported chunks/functions; captured-variable cells; randomized physical records, operand layouts and opcode aliases; constant fusion; incremental decoding and record integrity. Remaining compatible statement regions use conservative dispatch. |
 
 The function compiler covers local bindings, assignments, native arithmetic/comparison operators, tables, indexing, short-circuit logic, interpolated strings, calls, recursive functions, closures, varargs, multiple returns, branches, loops, `break` and `continue`. Each binding uses a mutable cell; closure factories retain the cells present at creation, preserving captures across loop iterations and writes after a function returns. Method calls and generalized iteration use native protocol bridges with VM registers/body execution to preserve lookup order, `__iter` and yielding behavior.
 
-Functions needing unsupported constructs retain their native bodies. Direct environment/stack introspection, preserved type declarations in a candidate function, and closures embedded in native bridge expressions can require fallback. Child functions may still be compiled independently. `--stats` reports compiled functions, encoded instructions, native functions and fallback reasons, and counts method, iteration and closure bridges separately. `--require-function-vm` rejects whole-function fallbacks before writing output; it still permits the reported native protocol bridges.
+Functions needing unsupported constructs retain their native bodies. Direct environment/stack introspection, preserved type declarations in a candidate function, and closures embedded in iterator expressions can require fallback. Child functions may still be compiled independently. Fallback warnings appear even without `--stats`, unless `--quiet` is used. `--stats` reports compiled functions, encoded instructions, native functions and fallback reasons, and counts method, iteration and closure bridges separately. `--require-function-vm` rejects whole-function fallbacks before writing output; it still permits the reported native protocol bridges.
+
+Callbacks nested in method arguments, including table constructors, use scope-aware capture rewriting. Each bridge invocation snapshots the required cell references so callbacks retained by a receiver keep the correct loop iteration and still share later writes. The complete method call remains native to preserve lookup and argument evaluation behavior; these bridges are not private bytecode.
 
 The main chunk is compiled after its child functions. A native fallback reason is reported when it cannot compile, and `--require-chunk-vm` can reject such an output. `--vm-functions-only` explicitly keeps main-chunk control flow native. Uncompiled chunks retain the earlier conservative backend: assignment, compound-assignment and call handlers contain transformed native Luau, while declarations and control transfers keep their scopes. A chunk containing only `return 1` can now compile to register bytecode. The register interpreter is **not the official Luau binary bytecode format**, and this is not a claim of complete virtualization for every Luau construct.
 
 Native control-flow dispatch requires at least three consecutive compatible statements. Regions are capped at 128 statements to bound interpreter size; dispatch uses a diversified binary decision tree instead of scanning every handler. Dead-code density controls unreachable handlers inside these regions. Profiles describe enabled passes, and the statistics describe transformations actually applied.
+
+Arithmetic predicates such as `(x*(x+1))%2==0` are algebraic identities, not a meaningful security boundary. Presets disable them. The library's legacy `opaque_predicates` field remains available for compatibility and experimentation; setting it to `true` adds removable arithmetic noise.
 
 ## Options
 
@@ -119,6 +123,8 @@ The runtime suite compares original and generated scripts in the official Luau i
 ## Limits
 
 Obfuscation increases analysis effort; keys, decoders and handlers still ship to the client. The feedback encoding is not cryptographic encryption. Integrity checks detect some payload modifications on decoding, and can themselves be patched; they do not authenticate the entire script. Cached strings are checked when first decoded. There are no anti-debugging or exploit-specific hooks.
+
+The string pool uses one shared decoder, which an analyst can identify, emulate or instrument. Repeated calls and cached plaintext are useful analysis targets. A `loadstring` / HTTP loader still exposes its behavior, and its destination is observable when used; encoding the URL does not provide confidentiality. The visible watermark intentionally identifies RealObfuscator and its GitHub repository. Successful parsing or runtime-equivalence tests establish compatibility, not resistance to deobfuscation.
 
 More dispatch, constants and decoys increase output size, memory use, compile time and execution overhead. Generated helpers consume Luau registers/locals. Error line numbers, local names and introspection of transformed code can change. Test actual Roblox workloads and target devices before deployment. Keep valuable authoritative logic on the server.
 

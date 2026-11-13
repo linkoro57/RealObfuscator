@@ -143,6 +143,38 @@ fn directory_builds_preserve_paths_and_report_applied_vm_work() {
 }
 
 #[test]
+fn vm_fallbacks_are_visible_without_stats_unless_quiet() {
+    let dir = temp_dir();
+    let input = dir.join("input.luau");
+    let output = dir.join("output.luau");
+    fs::write(&input, "local function f()return getfenv(1)end;return f").unwrap();
+    for quiet in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_realobfuscator"));
+        command
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .args(["--mode", "vm"]);
+        if quiet {
+            command.arg("--quiet");
+        }
+        let result = command.output().unwrap();
+        assert!(result.status.success());
+        assert!(output.is_file());
+        let diagnostics = String::from_utf8_lossy(&result.stderr);
+        if quiet {
+            assert!(diagnostics.is_empty());
+        } else {
+            assert!(diagnostics.contains("main chunk remains native"));
+            assert!(diagnostics.contains("1 functions remain native"));
+            assert!(diagnostics.contains("--require-chunk-vm"));
+            assert!(diagnostics.contains("--require-function-vm"));
+        }
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn strict_function_vm_reports_coverage_and_preserves_output_on_fallback() {
     let dir = temp_dir();
     let input = dir.join("input.luau");

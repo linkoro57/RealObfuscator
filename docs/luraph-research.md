@@ -32,7 +32,7 @@ The following are independent implementations of general techniques, not claims 
 | Incremental decoding | Record decoding during execution or explicit cached decoding | Cached mode retains a decoded instruction table for speed; rolling mode does not. |
 | Native runtime protocols | Native colon-call bridges and native generic-iteration drivers around VM bodies | Preserves NAMECALL ordering, `__iter`, and coroutine behavior. Their bridge expressions remain native and are counted separately. |
 | Identifier and property hiding | Scope-aware local renaming, encoded property keys | Native method names can remain visible. |
-| Predicates and dead handlers | Existing conservative dispatcher predicates and mixed decoy handlers | Compiler optimization and semantic analysis may remove them; more noise is not a time guarantee. |
+| Predicates and dead handlers | Mixed decoy handlers; trivial arithmetic predicates disabled in presets since 2.2.1 (legacy library opt-in) | Compiler optimization and semantic analysis may remove them; algebraic identities are not a meaningful security boundary. |
 | Build diversification | OS-seeded builds, source-derived streams, randomized names/layouts | Fixed seeds intentionally reproduce builds. |
 | Selective coverage / performance | Native profiles, VM hardening profiles, cache controls, strict coverage flags | `--require-function-vm` and `--require-chunk-vm` reject whole-body fallbacks. Functions-only mode and native protocol counts expose the boundaries. No LPH macro compatibility claim. |
 | Platform lock / debug-library-specific protection | Luau target and captured required runtime helpers | Platform-specific anti-debug behavior is not implemented or presented as equivalent protection. |

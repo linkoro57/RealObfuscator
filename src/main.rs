@@ -316,6 +316,15 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
         atomic_write(output, &output_code.code)?;
         if !args.quiet {
             let report = &output_code.report;
+            if let Some(reason) = &report.vm_chunk_fallback {
+                eprintln!("Warning: main chunk remains native ({reason}); use --require-chunk-vm to reject this fallback.");
+            }
+            if report.vm_native_functions != 0 {
+                eprintln!(
+                    "Warning: {} functions remain native; use --stats for reasons or --require-function-vm to reject these fallbacks.",
+                    report.vm_native_functions
+                );
+            }
             println!(
                 "{} -> {} ({} -> {} bytes)",
                 input.display(),
