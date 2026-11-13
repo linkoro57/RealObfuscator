@@ -1,26 +1,473 @@
-use realobfuscator::{DeadCodeDensity, ObfuscationConfig, Obfuscator, ProtectionLevel};
-use std::{env,fs,io::Write,path::{Path,PathBuf},process, time::Instant};
+use realobfuscator::{rng::Rng, DeadCodeDensity, ObfuscationConfig, Obfuscator, ProtectionLevel};
+use std::{
+    env, fs,
+    io::Write,
+    path::{Component, Path, PathBuf},
+    process,
+    time::Instant,
+};
 
-const HELP:&str="RealObfuscator 2.0.0 (Rust)\n\nUsage: realobfuscator [OPTIONS] <SOURCE>\n\nOptions:\n  -o, --output <PATH>       Output file or directory\n      --mode <MODE>         lightweight (default), rename, native, or vm\n      --vm-rolling          Decode VM instructions while reading (default)\n      --vm-cached           Cache decoded VM instructions\n      --vm-packed           Use compact VM payloads\n      --vm-unpacked         Disable compact VM payloads\n  -q, --quiet               Show errors only\n  -h, --help                Print help\n  -V, --version             Print version\n      --help-all            Show compatibility options\n";
-const EXTRA:&str="\nCompatibility options:\n  -i, --input <PATH>\n  -l, --level <1..4>\n      --vm\n      --antitamper\n      --strings / --no-strings\n      --cff / --no-cff\n      --deadcode / --no-deadcode\n      --density <low|medium|high>\n      --seed <INTEGER>\n      --vm-hardening <basic|client-max|max>\n      --lightweight\n      --rename-only\n";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const HELP: &str = "Usage: realobfuscator [OPTIONS] <SOURCE>
 
-#[derive(Default)]struct Args{source:Option<PathBuf>,input:Option<PathBuf>,output:Option<PathBuf>,mode:Option<String>,level:Option<u8>,vm:bool,quiet:bool,seed:Option<u64>,strings:Option<bool>,cff:Option<bool>,dead:Option<bool>,antitamper:bool,density:Option<DeadCodeDensity>,hardening:Option<String>,rolling:Option<bool>,packed:Option<bool>,lightweight:bool,rename_only:bool}
+Options:
+  -o, --output <PATH>       Output file or directory
+      --mode <MODE>         lightweight (default), rename, native, or vm
+                            vm is experimental statement dispatch, not a full Luau VM
+      --stats               Show counts of transformations actually applied
+      --pretty              Format generated code across multiple lines
+      --decode <lazy|eager> String decoding strategy
+      --keep-types          Preserve Luau type annotations and declarations
+      --vm-rolling          Decode VM instructions while reading (default)
+      --vm-cached           Cache decoded VM instructions
+      --vm-packed           Use compact VM payloads
+      --vm-unpacked         Use table VM payloads
+  -q, --quiet               Show errors only
+  -h, --help                Print help
+  -V, --version             Print version
+      --help-all            Show compatibility options
+";
+const EXTRA: &str = "
+Compatibility options:
+  -i, --input <PATH>
+  -l, --level <1..4>
+      --vm
+      --antitamper / --no-antitamper
+      --strings / --no-strings
+      --cff / --no-cff
+      --deadcode / --no-deadcode
+      --density <low|medium|high>
+      --seed <INTEGER>
+      --vm-hardening <basic|client-max|max>
+      --lightweight
+      --rename-only
+";
 
-fn usage(message:&str)->!{eprintln!("error: {message}\n\nTry '--help' for more information.");process::exit(2)}
-fn value(it:&mut impl Iterator<Item=String>,option:&str)->String{it.next().unwrap_or_else(||usage(&format!("{option} requires a value")))}
-fn parse()->Args{let mut a=Args::default();let mut it=env::args().skip(1);while let Some(x)=it.next(){match x.as_str(){"-h"|"--help"=>{print!("{HELP}");process::exit(0)},"--help-all"=>{print!("{HELP}{EXTRA}");process::exit(0)},"-V"|"--version"=>{println!("RealObfuscator 2.0.0");process::exit(0)},"-o"|"--output"=>a.output=Some(value(&mut it,&x).into()),"-i"|"--input"=>a.input=Some(value(&mut it,&x).into()),"--mode"=>a.mode=Some(value(&mut it,&x)),"-l"|"--level"=>a.level=Some(value(&mut it,&x).parse().unwrap_or_else(|_|usage("level must be 1..4"))),"--vm"=>a.vm=true,"-q"|"--quiet"=>a.quiet=true,"--seed"=>a.seed=Some(value(&mut it,&x).parse().unwrap_or_else(|_|usage("seed must be an integer"))),"--strings"=>a.strings=Some(true),"--no-strings"=>a.strings=Some(false),"--cff"=>a.cff=Some(true),"--no-cff"=>a.cff=Some(false),"--deadcode"=>a.dead=Some(true),"--no-deadcode"=>a.dead=Some(false),"--antitamper"=>a.antitamper=true,"--density"=>a.density=Some(match value(&mut it,&x).as_str(){"low"=>DeadCodeDensity::Low,"medium"=>DeadCodeDensity::Medium,"high"=>DeadCodeDensity::High,_=>usage("density must be low, medium, or high")}),"--vm-hardening"=>a.hardening=Some(value(&mut it,&x)),"--vm-rolling"=>a.rolling=Some(true),"--vm-cached"=>a.rolling=Some(false),"--vm-packed"=>a.packed=Some(true),"--vm-unpacked"=>a.packed=Some(false),"--lightweight"=>a.lightweight=true,"--rename-only"=>a.rename_only=true,"-r"|"--recursive"=>{},_ if x.starts_with('-')=>usage(&format!("unknown option {x}")),_=>{if a.source.replace(x.into()).is_some(){usage("only one SOURCE may be provided")}}}}a}
-
-fn config(a:&Args)->ObfuscationConfig{
-    if a.source.is_some()&&a.input.is_some(){usage("use SOURCE or --input, not both")}
-    let primary=u8::from(a.mode.is_some())+u8::from(a.level.is_some())+u8::from(a.lightweight)+u8::from(a.rename_only);if primary>1{usage("choose one of --mode, --level, --lightweight, or --rename-only")}
-    if a.mode.is_some()&&a.vm{usage("use --mode vm or --vm, not both")}
-    let mode=if a.lightweight{Some("lightweight")}else if a.rename_only{Some("rename")}else{a.mode.as_deref()};
-    let mut c=match mode{Some("lightweight")=>ObfuscationConfig::lightweight(),Some("rename")=>{let mut x=ObfuscationConfig::lightweight();x.encrypt_strings=false;x},Some("native")=>ObfuscationConfig::default().with_level(ProtectionLevel::Maximum),Some("vm")=>ObfuscationConfig::default().with_level(ProtectionLevel::Paranoid),Some(_)=>usage("mode must be lightweight, rename, native, or vm"),None=>if let Some(n)=a.level{ObfuscationConfig::default().with_level(ProtectionLevel::try_from(n).unwrap_or_else(|e|usage(&e)))}else if a.vm{let mut x=ObfuscationConfig::default();x.virtualize=true;x}else if a.antitamper||a.strings.is_some()||a.cff.is_some()||a.dead.is_some(){ObfuscationConfig::default()}else{ObfuscationConfig::lightweight()}};
-    if let Some(seed)=a.seed{c=c.with_seed(seed)}if let Some(v)=a.strings{c.encrypt_strings=v}if let Some(v)=a.cff{c.control_flow_flatten=v}if let Some(v)=a.dead{c.inject_dead_code=v}if a.antitamper{c.anti_tamper=true}if let Some(d)=a.density{c.dead_code_density=d}if let Some(h)=&a.hardening{if !c.virtualize{usage("--vm-hardening requires VM mode")}c.vm_hardening=h.clone();}if let Some(r)=a.rolling{if !c.virtualize{usage("--vm-rolling/--vm-cached requires VM mode")}c.vm_predecode_bytecode=!r}if let Some(p)=a.packed{if !c.virtualize{usage("--vm-packed/--vm-unpacked requires VM mode")}c.vm_pack_bytecode=p;c.vm_pack_constants=p}c
+#[derive(Default)]
+struct Args {
+    source: Option<PathBuf>,
+    input: Option<PathBuf>,
+    output: Option<PathBuf>,
+    mode: Option<String>,
+    level: Option<u8>,
+    vm: bool,
+    quiet: bool,
+    seed: Option<u64>,
+    strings: Option<bool>,
+    cff: Option<bool>,
+    dead: Option<bool>,
+    antitamper: Option<bool>,
+    density: Option<DeadCodeDensity>,
+    hardening: Option<String>,
+    rolling: Option<bool>,
+    packed: Option<bool>,
+    lightweight: bool,
+    rename_only: bool,
+    stats: bool,
+    pretty: bool,
+    keep_types: bool,
+    decode: Option<String>,
 }
 
-fn atomic_write(path:&Path,text:&str)->Result<(),String>{if let Some(parent)=path.parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?}let name=path.file_name().and_then(|x|x.to_str()).unwrap_or("output");let tmp=path.with_file_name(format!(".{name}.{}.tmp",process::id()));let result=(||{let mut f=fs::File::create(&tmp)?;f.write_all(text.as_bytes())?;f.sync_all()?;fs::rename(&tmp,path)?;Ok::<_,std::io::Error>(())})();if result.is_err(){let _=fs::remove_file(&tmp);}result.map_err(|e|e.to_string())}
-fn one(input:&Path,output:&Path,o:&Obfuscator,quiet:bool)->bool{let result=(||{let source=fs::read_to_string(input).map_err(|e|e.to_string())?;let out=o.obfuscate(&source).map_err(|e|e.to_string())?;atomic_write(output,&out)?;if !quiet{println!("{} -> {} ({} -> {} bytes)",input.display(),output.display(),source.len(),out.len())}Ok::<_,String>(())})();if let Err(e)=result{eprintln!("Error: {}: {e}",input.display());false}else{true}}
-fn collect(dir:&Path,out:&mut Vec<PathBuf>)->Result<(),String>{for entry in fs::read_dir(dir).map_err(|e|e.to_string())?{let path=entry.map_err(|e|e.to_string())?.path();if path.is_dir(){collect(&path,out)?}else if matches!(path.extension().and_then(|x|x.to_str()).map(str::to_ascii_lowercase).as_deref(),Some("lua"|"luau"))&&!path.file_stem().and_then(|x|x.to_str()).is_some_and(|x|x.to_ascii_lowercase().ends_with(".obf")){out.push(path)}}Ok(())}
+fn usage(message: &str) -> ! {
+    eprintln!("error: {message}\n\nTry '--help' for more information.");
+    process::exit(2)
+}
 
-fn main(){let a=parse();let input=a.source.clone().or(a.input.clone()).unwrap_or_else(||usage("provide a Luau file or directory"));if !input.exists(){eprintln!("Error: input path not found: {}",input.display());process::exit(1)}let c=config(&a);if let Err(e)=c.validate(){usage(&e)}let o=Obfuscator::new(c);let start=Instant::now();let output=a.output.clone().unwrap_or_else(||if input.is_dir(){let mut x=input.clone().into_os_string();x.push("-obfuscated");x.into()}else{let ext=input.extension().and_then(|x|x.to_str()).filter(|x|matches!(x.to_ascii_lowercase().as_str(),"lua"|"luau")).unwrap_or("luau");input.with_file_name(format!("{}.obf.{ext}",input.file_stem().unwrap().to_string_lossy()))});let ia=fs::canonicalize(&input).unwrap_or(input.clone());if output.exists()&&fs::canonicalize(&output).ok().as_ref()==Some(&ia){usage("output must differ from input")}let ok=if input.is_file(){if output.is_dir(){usage("file input needs a file output")}one(&input,&output,&o,a.quiet)}else{let mut files=Vec::new();if let Err(e)=collect(&input,&mut files){eprintln!("Error: {e}");process::exit(1)}files.sort();if files.is_empty(){eprintln!("Error: no .lua or .luau files found in {}",input.display());process::exit(1)}let mut good=0;for file in &files{let target=output.join(file.strip_prefix(&input).unwrap());if one(file,&target,&o,a.quiet){good+=1}}if !a.quiet{println!("{good} files written to {}; {} failed ({:.2}s).",output.display(),files.len()-good,start.elapsed().as_secs_f64())}good==files.len()};if !ok{process::exit(1)}}
+fn value(it: &mut impl Iterator<Item = String>, option: &str) -> String {
+    it.next()
+        .unwrap_or_else(|| usage(&format!("{option} requires a value")))
+}
+
+fn parse() -> Args {
+    let mut args = Args::default();
+    let mut it = env::args().skip(1);
+    while let Some(option) = it.next() {
+        match option.as_str() {
+            "-h" | "--help" => {
+                println!("RealObfuscator {VERSION}\n\n{HELP}");
+                process::exit(0)
+            }
+            "--help-all" => {
+                println!("RealObfuscator {VERSION}\n\n{HELP}{EXTRA}");
+                process::exit(0)
+            }
+            "-V" | "--version" => {
+                println!("RealObfuscator {VERSION}");
+                process::exit(0)
+            }
+            "-o" | "--output" => args.output = Some(value(&mut it, &option).into()),
+            "-i" | "--input" => args.input = Some(value(&mut it, &option).into()),
+            "--mode" => args.mode = Some(value(&mut it, &option)),
+            "-l" | "--level" => {
+                args.level = Some(
+                    value(&mut it, &option)
+                        .parse()
+                        .unwrap_or_else(|_| usage("level must be 1..4")),
+                )
+            }
+            "--vm" => args.vm = true,
+            "-q" | "--quiet" => args.quiet = true,
+            "--stats" => args.stats = true,
+            "--pretty" => args.pretty = true,
+            "--keep-types" => args.keep_types = true,
+            "--decode" => args.decode = Some(value(&mut it, &option)),
+            "--seed" => {
+                args.seed = Some(
+                    value(&mut it, &option)
+                        .parse()
+                        .unwrap_or_else(|_| usage("seed must be an integer")),
+                )
+            }
+            "--strings" => args.strings = Some(true),
+            "--no-strings" => args.strings = Some(false),
+            "--cff" => args.cff = Some(true),
+            "--no-cff" => args.cff = Some(false),
+            "--deadcode" => args.dead = Some(true),
+            "--no-deadcode" => args.dead = Some(false),
+            "--antitamper" => args.antitamper = Some(true),
+            "--no-antitamper" => args.antitamper = Some(false),
+            "--density" => {
+                args.density = Some(match value(&mut it, &option).as_str() {
+                    "low" => DeadCodeDensity::Low,
+                    "medium" => DeadCodeDensity::Medium,
+                    "high" => DeadCodeDensity::High,
+                    _ => usage("density must be low, medium, or high"),
+                })
+            }
+            "--vm-hardening" => args.hardening = Some(value(&mut it, &option)),
+            "--vm-rolling" => args.rolling = Some(true),
+            "--vm-cached" => args.rolling = Some(false),
+            "--vm-packed" => args.packed = Some(true),
+            "--vm-unpacked" => args.packed = Some(false),
+            "--lightweight" => args.lightweight = true,
+            "--rename-only" => args.rename_only = true,
+            "-r" | "--recursive" => {}
+            "--" => {
+                for path in it.by_ref() {
+                    if args.source.replace(path.into()).is_some() {
+                        usage("only one SOURCE may be provided")
+                    }
+                }
+            }
+            _ if option.starts_with('-') => usage(&format!("unknown option {option}")),
+            _ => {
+                if args.source.replace(option.into()).is_some() {
+                    usage("only one SOURCE may be provided")
+                }
+            }
+        }
+    }
+    args
+}
+
+fn config(args: &Args) -> ObfuscationConfig {
+    if args.source.is_some() && args.input.is_some() {
+        usage("use SOURCE or --input, not both")
+    }
+    let primary = u8::from(args.mode.is_some())
+        + u8::from(args.level.is_some())
+        + u8::from(args.lightweight)
+        + u8::from(args.rename_only)
+        + u8::from(args.vm);
+    if primary > 1 {
+        usage("choose one of --mode, --level, --lightweight, --rename-only, or --vm")
+    }
+    let mode = if args.lightweight {
+        Some("lightweight")
+    } else if args.rename_only {
+        Some("rename")
+    } else if args.vm {
+        Some("vm")
+    } else {
+        args.mode.as_deref()
+    };
+    let mut config = match mode {
+        Some("lightweight") => ObfuscationConfig::lightweight(),
+        Some("rename") => {
+            let mut c = ObfuscationConfig::lightweight();
+            c.encrypt_strings = false;
+            c
+        }
+        Some("native") => ObfuscationConfig::default().with_level(ProtectionLevel::Maximum),
+        Some("vm") => ObfuscationConfig::default().with_level(ProtectionLevel::Paranoid),
+        Some(_) => usage("mode must be lightweight, rename, native, or vm"),
+        None => {
+            if let Some(level) = args.level {
+                ObfuscationConfig::default()
+                    .with_level(ProtectionLevel::try_from(level).unwrap_or_else(|e| usage(&e)))
+            } else if args.antitamper == Some(true)
+                || args.cff == Some(true)
+                || args.dead == Some(true)
+            {
+                ObfuscationConfig::default()
+            } else {
+                ObfuscationConfig::lightweight()
+            }
+        }
+    };
+    if let Some(seed) = args.seed {
+        config = config.with_seed(seed)
+    }
+    if let Some(value) = args.strings {
+        config.encrypt_strings = value
+    }
+    if let Some(value) = args.cff {
+        config.control_flow_flatten = value
+    }
+    if let Some(value) = args.dead {
+        config.inject_dead_code = value
+    }
+    if let Some(value) = args.antitamper {
+        config.anti_tamper = value
+    }
+    if let Some(value) = args.density {
+        config.dead_code_density = value
+    }
+    if let Some(value) = &args.decode {
+        config.string_decode_mode = value.clone()
+    }
+    config.minify = !args.pretty;
+    config.strip_types = !args.keep_types;
+    if let Some(value) = &args.hardening {
+        if !config.virtualize {
+            usage("--vm-hardening requires VM mode")
+        }
+        config.vm_hardening = value.clone();
+    }
+    if let Some(value) = args.rolling {
+        if !config.virtualize {
+            usage("--vm-rolling/--vm-cached requires VM mode")
+        }
+        config.vm_predecode_bytecode = !value;
+    }
+    if let Some(value) = args.packed {
+        if !config.virtualize {
+            usage("--vm-packed/--vm-unpacked requires VM mode")
+        }
+        config.vm_pack_bytecode = value;
+        config.vm_pack_constants = value;
+    }
+    config
+}
+
+fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let tmp = path.with_file_name(format!(
+        ".{name}.{}.{:016x}.tmp",
+        process::id(),
+        Rng::random().next_u64()
+    ));
+    // Never truncate or follow an existing temporary file or symlink.
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result.map_err(|e: std::io::Error| e.to_string())
+}
+
+fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> bool {
+    let result = (|| {
+        let source = fs::read_to_string(input).map_err(|e| e.to_string())?;
+        let output_code = obfuscator
+            .obfuscate_with_report(&source)
+            .map_err(|e| e.to_string())?;
+        atomic_write(output, &output_code.code)?;
+        if !args.quiet {
+            let report = &output_code.report;
+            println!(
+                "{} -> {} ({} -> {} bytes)",
+                input.display(),
+                output.display(),
+                report.input_bytes,
+                report.output_bytes
+            );
+            if args.stats {
+                println!("  bindings: {}; strings: {} ({} references); numbers: {}; fields: {}; dispatch regions: {}; VM statements: {}; decoys: {}; predicates: {}; integrity checks: {}",
+                    report.renamed_bindings, report.encrypted_strings, report.string_references, report.obfuscated_numbers,
+                    report.hidden_fields, report.flattened_regions, report.virtualized_statements, report.decoy_blocks,
+                    report.opaque_predicates, report.integrity_checks);
+            }
+        }
+        Ok::<_, String>(())
+    })();
+    if let Err(error) = result {
+        eprintln!("Error: {}: {error}", input.display());
+        false
+    } else {
+        true
+    }
+}
+
+fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            collect(&path, files)?;
+        } else if kind.is_file()
+            && matches!(
+                path.extension()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
+                Some("lua" | "luau")
+            )
+            && !path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.to_ascii_lowercase().ends_with(".obf"))
+        {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Resolve missing output paths through their nearest existing ancestor as well.
+fn resolved(path: &Path) -> std::io::Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        env::current_dir()?.join(path)
+    };
+    let mut ancestor = absolute.as_path();
+    let mut suffix = Vec::new();
+    while !ancestor.try_exists()? {
+        if let Some(name) = ancestor.file_name() {
+            suffix.push(name.to_owned());
+        } else {
+            // Deal with trailing `..` without treating it as a literal file name.
+            let mut normalized = PathBuf::new();
+            for component in absolute.components() {
+                match component {
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        normalized.pop();
+                    }
+                    other => normalized.push(other.as_os_str()),
+                }
+            }
+            return resolved(&normalized);
+        }
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| std::io::Error::other("cannot resolve output path"))?;
+    }
+    let mut output = fs::canonicalize(ancestor)?;
+    for component in suffix.into_iter().rev() {
+        output.push(component);
+    }
+    Ok(output)
+}
+
+fn main() {
+    let args = parse();
+    let input = args
+        .source
+        .clone()
+        .or(args.input.clone())
+        .unwrap_or_else(|| usage("provide a Luau file or directory"));
+    if !input.exists() {
+        eprintln!("Error: input path not found: {}", input.display());
+        process::exit(1)
+    }
+    let config = config(&args);
+    if let Err(error) = config.validate() {
+        usage(&error)
+    }
+    let obfuscator = Obfuscator::new(config);
+    let start = Instant::now();
+    let input_absolute = resolved(&input).unwrap_or_else(|e| usage(&e.to_string()));
+    let output = args.output.clone().unwrap_or_else(|| {
+        if input.is_dir() {
+            input_absolute.with_file_name(format!(
+                "{}-obfuscated",
+                input_absolute
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ))
+        } else {
+            let extension = input
+                .extension()
+                .and_then(|s| s.to_str())
+                .filter(|s| matches!(s.to_ascii_lowercase().as_str(), "lua" | "luau"))
+                .unwrap_or("luau");
+            input.with_file_name(format!(
+                "{}.obf.{extension}",
+                input.file_stem().unwrap().to_string_lossy()
+            ))
+        }
+    });
+    let output_absolute = resolved(&output).unwrap_or_else(|e| usage(&e.to_string()));
+    if output_absolute == input_absolute {
+        usage("output must differ from input")
+    }
+    let success = if input.is_file() {
+        if output.is_dir() {
+            usage("file input needs a file output")
+        }
+        one(&input, &output, &obfuscator, &args)
+    } else {
+        if output.is_file() {
+            usage("directory input needs a directory output")
+        }
+        if output_absolute.starts_with(&input_absolute)
+            || input_absolute.starts_with(&output_absolute)
+        {
+            usage(
+                "input and output directories must not overlap; choose a sibling output directory",
+            )
+        }
+        let mut files = Vec::new();
+        if let Err(error) = collect(&input, &mut files) {
+            eprintln!("Error: {error}");
+            process::exit(1)
+        }
+        files.sort();
+        if files.is_empty() {
+            eprintln!("Error: no .lua or .luau files found in {}", input.display());
+            process::exit(1)
+        }
+        let mut good = 0;
+        for file in &files {
+            let target = output.join(file.strip_prefix(&input).unwrap());
+            if one(file, &target, &obfuscator, &args) {
+                good += 1;
+            }
+        }
+        if !args.quiet {
+            println!(
+                "{good} files written to {}; {} failed ({:.2}s).",
+                output.display(),
+                files.len() - good,
+                start.elapsed().as_secs_f64()
+            );
+        }
+        good == files.len()
+    };
+    if !success {
+        process::exit(1)
+    }
+}

@@ -1,158 +1,111 @@
-<div align="center">
+# RealObfuscator
 
-# 🛡️ RealObfuscator
+A Rust command-line obfuscator for Luau and Roblox projects. Version **2.1.0** replaces token-based rewriting with a parsed Luau syntax tree, scope-aware renaming, diversified constant encoding, and conservative control-flow dispatch.
 
-### A layered Luau obfuscator built for Roblox projects
+## Build and run
 
-Transform readable Luau into protected code directly from a fast, standalone Rust command-line application.
-
-[![Version](https://img.shields.io/badge/version-2.0.0-7c3aed.svg)](https://github.com/linkoro57/RealObfuscator)
-[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org/)
-[![Luau](https://img.shields.io/badge/Luau-0.741-00a2ff.svg)](https://luau.org/)
-[![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)](LICENSE)
-
-[Quick start](#-quick-start) · [Protection modes](#️-protection-modes) · [Library API](#-library-api) · [Tests](#-tests)
-
-</div>
-
-> [!IMPORTANT]
-> Keep your original source and test every generated script in Roblox Studio before publishing it. Obfuscation raises the cost of analysis; it cannot make client-side code impossible to recover.
-
-## ✨ Highlights
-
-| 🔐 Layered protection | ⚡ Native executable | 🎲 Build diversification |
-| :--- | :--- | :--- |
-| Identifier renaming, string encoding, number transformations, minification, and build signatures. | A standalone Rust executable with no Python runtime or third-party Rust dependency. | Private random seeds and generated identifiers vary between release builds. |
-
-| 🧩 Luau-aware lexer | 📁 Project processing | 🧪 Runtime-tested |
-| :--- | :--- | :--- |
-| Preserves strings and directives while rejecting unsupported syntax instead of silently changing it. | Recursively processes `.lua` and `.luau` files while preserving relative paths. | Generated code can be checked with the bundled official Luau 0.741 runtime. |
-
-## 🚀 Quick start
-
-### 1. Build
-
-Install the stable Rust toolchain, clone the repository, and compile the release binary:
-
-```bash
-git clone https://github.com/linkoro57/RealObfuscator.git
-cd RealObfuscator
+```sh
 cargo build --release
-```
 
-The executable is written to `target/release/realobfuscator` (`realobfuscator.exe` on Windows).
-
-### 2. Obfuscate
-
-```bash
-# Fast default protection
+# Default: rename locals, encode strings, minify
 realobfuscator script.luau
 
-# Native protection profile
-realobfuscator script.luau --mode native
+# Native transformations, with a report of applied work
+realobfuscator script.luau --mode native --stats
 
-# Choose the output path
-realobfuscator script.luau --output build/script.luau
+# Experimental encoded statement dispatch
+realobfuscator script.luau --mode vm --vm-packed --stats
+
+# Process a project into a separate directory
+realobfuscator src --output build --mode native
 ```
 
-The default output is `script.obf.luau`.
+On Windows the executable is `target/release/realobfuscator.exe`. Default file output is `script.obf.luau`. Directory builds preserve relative paths, skip `.obf.lua` / `.obf.luau` files, and do not follow symlinks. Input and output directories must not overlap.
 
-### 3. Process a project
+## Profiles
 
-```bash
-realobfuscator src --output build
-```
+| Mode | Applied transformations |
+| --- | --- |
+| `rename` | Rename local bindings and parameters, preserve global/member names, minify. |
+| `lightweight` (default) | Rename plus a shuffled, deduplicated string pool and eager cached decoding. |
+| `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch, opaque predicates and decoy handlers. |
+| `vm` | Native constant transformations plus an experimental interpreter for compatible statement sequences, with randomized opcodes, feedback-encoded instruction tapes and balanced dispatch trees. |
 
-Directories are processed recursively. Only `.lua` and `.luau` files are transformed, and their relative paths are preserved.
+The VM interprets **assignment, compound-assignment and call statements**. Their handlers contain transformed native Luau. Declarations, loops, branches, returns, `break` and `continue` retain their original scopes and control behavior; eligible sequences inside nested blocks are processed separately. It is **not a complete Luau bytecode virtualizer**. A chunk containing only `return 1` has zero virtualized statements. `--stats` reports this explicitly.
 
-## 🧱 Protection pipeline
+Native control-flow dispatch requires at least three consecutive compatible statements. Regions are capped at 128 statements to bound interpreter size; dispatch uses a diversified binary decision tree instead of scanning every handler. Dead-code density controls unreachable handlers inside these regions. Profiles describe enabled passes, and the statistics describe transformations actually applied.
 
-```mermaid
-flowchart LR
-    A[Luau source] --> B[Lex and validate]
-    B --> C[Remove comments and type aliases]
-    C --> D[Rename local identifiers]
-    D --> E[Encode strings and numbers]
-    E --> F[Minify output]
-    F --> G[Protected Luau]
-```
+## Options
 
-## 🎛️ Protection modes
+```sh
+# Reproducible development build
+realobfuscator script.luau --mode native --seed 42 --stats
 
-| Mode | Speed | Output size | Purpose |
-| :--- | :---: | :---: | :--- |
-| `rename` | ⚡⚡⚡ | Small | Rename local identifiers and minify the source. |
-| `lightweight` | ⚡⚡⚡ | Small | Rename identifiers and encode strings. This is the default. |
-| `native` | ⚡⚡ | Medium | Enable the complete native transformation profile. |
-| `vm` | ⚡⚡ | Medium | Use the VM-compatible hardened configuration and VM build signature. |
+# VM payload and decoding variants
+realobfuscator script.luau --mode vm --vm-cached --vm-packed
+realobfuscator script.luau --mode vm --vm-rolling --vm-unpacked
 
-```bash
-realobfuscator script.luau --mode rename
-realobfuscator script.luau --mode lightweight
-realobfuscator script.luau --mode native
-realobfuscator script.luau --mode vm
-```
+# Preserve type syntax or inspect formatted output
+realobfuscator script.luau --keep-types --pretty
 
-Show compatibility flags and advanced settings with:
+# Decode strings on demand instead of at startup
+realobfuscator script.luau --decode lazy
 
-```bash
 realobfuscator --help-all
 ```
 
-## 🦀 Library API
+Release builds use operating-system randomness. An explicit seed produces identical output across processes for the same input and configuration, and different source modules derive different random streams from that seed. Do not use fixed development seeds for diversified releases.
+
+## Compatibility and behavior
+
+- The [darklua](https://github.com/seaofvoices/darklua) / [full_moon](https://github.com/Kampfkarren/full-moon) AST frontend handles supported Luau syntax including interpolated strings, type declarations, generics, casts, compound assignments, floor division, and generalized iteration. Unsupported or malformed syntax returns an error before output is replaced.
+- Renaming follows lexical scopes, including recursive local functions, loop bindings, implicit method `self`, shadowing and `repeat ... until` conditions. Local assignment initializers are resolved before their new bindings are introduced.
+- Quoted, long-bracket and binary strings share the same encoding pipeline. Luau escapes are decoded by the parser rather than approximated. Interpolation keeps the order of argument evaluation and uses Luau's `%*` formatting.
+- Property reads, writes and table keys can be redirected through encoded string constants. Colon method calls remain intact to preserve Roblox method behavior and single receiver evaluation. Method names and named function declarations may remain visible.
+- Integer transformations are restricted to exact unsigned 32-bit values. Fractional values and larger doubles retain their original values. Numeric keys and decoder functions are captured before source locals can shadow built-ins.
+- Type syntax is removed using AST nodes by default. `--keep-types` retains it; runtime transformations skip type-only code. `--!native` and optimization directives in the original leading comments are retained. Output uses `--!nocheck` and `--!nolint`.
+- The optional library `wrap_in_iife` setting defaults to `false`, preserving ordinary stack/environment behavior. Explicitly enabling it adds a function frame and requires stripped types.
+- Generated code is parsed again before writing. Files are written through unique, exclusively created temporary files; invalid input leaves existing output intact.
+
+## Library API
 
 ```rust
 use realobfuscator::{ObfuscationConfig, Obfuscator, ProtectionLevel};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ObfuscationConfig::default()
-        .with_seed(12345)
+        .with_seed(42)
         .with_level(ProtectionLevel::Maximum);
-    let source = r#"print("Hello, Roblox!")"#;
-    let protected = Obfuscator::new(config).obfuscate(source)?;
-    std::fs::write("script.obf.luau", protected)?;
+    let output = Obfuscator::new(config)
+        .obfuscate_with_report("local n=17; n+=2; n*=3; print(n, 'hello')")?;
+    println!("{:#?}", output.report);
+    std::fs::write("script.obf.luau", output.code)?;
     Ok(())
 }
 ```
 
-| Level | Pipeline |
-| :--- | :--- |
-| `Minimal` | Identifier and string transformations. |
-| `Standard` | Minimal profile plus standard hardening settings. |
-| `Maximum` | Complete native profile. |
-| `Paranoid` | VM-compatible hardened profile. |
+`obfuscate()` continues to return just the generated source. `obfuscate_with_report()` returns source and counts for original bindings, unique encoded strings, string references, numbers, hidden fields, dispatch regions, VM statements, decoys, predicates and integrity checks.
 
-For reproducible development builds, call `.with_seed(...)`. Omit the seed for release builds so RealObfuscator uses private process randomness.
+Protection levels map to these passes: `Minimal` enables renaming, strings and numbers; `Standard` adds native dispatch; `Maximum` adds property indirection and integrity checks; `Paranoid` enables experimental statement dispatch.
 
-## 🧪 Tests
+## Verification
 
-```bash
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-Build an optimized executable with:
+The runtime suite compares the stdout of original and generated scripts with the official Luau interpreter, across profiles, payload formats, decoder strategies and seeds. It also checks corruption rejection and large dispatch regions. See [tests/README.md](tests/README.md) to require execution tests on another machine.
 
-```bash
-cargo build --release
-```
+## Limits
 
-The repository retains `luau.exe` and `luau-compile.exe` under `tests/runtime/0.741` for manual runtime and syntax checks.
+Obfuscation increases analysis effort; keys, decoders and handlers still ship to the client. The feedback encoding is not cryptographic encryption. Integrity checks detect some payload modifications on decoding, and can themselves be patched; they do not authenticate the entire script. Cached strings are checked when first decoded. There are no anti-debugging or exploit-specific hooks.
 
-## ⚠️ Scope and limitations
+More dispatch, constants and decoys increase output size, memory use, compile time and execution overhead. Generated helpers consume Luau registers/locals. Error line numbers, local names and introspection of transformed code can change. Test actual Roblox workloads and target devices before deployment. Keep valuable authoritative logic on the server.
 
-- RealObfuscator targets Luau and Roblox-oriented workflows.
-- Backtick-interpolated strings are currently rejected.
-- Test generated scripts on the target device before publishing them.
-- No client-side obfuscator can guarantee secrecy against a determined attacker.
-- Server-authoritative design remains the primary protection for valuable game logic and data.
+There is no benchmark demonstrating superiority to Luraph, and this project makes no such claim. Full expression/closure virtualization, resistance to dedicated devirtualizers and adversarial evaluation are separate, substantial areas of work.
 
-## 📄 License
+## License
 
-Distributed under the [GNU General Public License v3.0](LICENSE).
-
-<div align="center">
-
-**Protect the implementation. Keep the behavior.**
-
-</div>
-
+[GNU General Public License v3.0](LICENSE). Third-party Rust dependencies retain their respective licenses.
