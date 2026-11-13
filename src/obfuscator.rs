@@ -250,7 +250,10 @@ impl Obfuscator {
                 code.push('\n');
             }
         }
-        code.push_str(&format!("-- RealObfuscator [{}]\n", self.config.build_id));
+        code.push_str(&format!(
+            "-- RealObfuscator [{}] | https://github.com/linkoro57/RealObfuscator\n",
+            self.config.build_id
+        ));
         if !self.config.strip_comments {
             // Retain comment text, detached from source positions after AST rewriting.
             for token in &tokens {
