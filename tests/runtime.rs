@@ -120,10 +120,167 @@ fn profiles() -> Vec<ObfuscationConfig> {
         .with_level(ProtectionLevel::Maximum);
     plain_strings.encrypt_strings = false;
     profiles.push(plain_strings);
+    let mut functions_only = ObfuscationConfig::default()
+        .with_seed(21)
+        .with_level(ProtectionLevel::Paranoid);
+    functions_only.virtualize_chunk = false;
+    profiles.push(functions_only);
+    let mut typed_vm = ObfuscationConfig::default()
+        .with_seed(22)
+        .with_level(ProtectionLevel::Paranoid);
+    typed_vm.strip_types = false;
+    profiles.push(typed_vm);
     profiles
 }
 
 const CASES: &[(&str, &str)] = &[
+    (
+        "closure_cells",
+        r#"
+        local function build()
+            local callbacks={}
+            for i=1,4 do
+                local value=i*10
+                callbacks[i]=function(delta)value+=delta;return value,i end
+                value+=1
+            end
+            local shared=0
+            local function even(n) if n==0 then return true end;shared+=1;return n%2==0 end
+            local functions={}
+            for k,v in {3,5,8} do
+                functions[k]=function()return v end
+                v+=2
+            end
+            return callbacks,functions,even
+        end
+        local a,b,even=build()
+        print(a[1](2));print(a[4](3));print(a[1](4));print(b[1](),b[3](),even(6))
+        local function recursive()
+            local function fact(n) if n<=1 then return 1 end;return n*fact(n-1)end
+            return fact
+        end
+        print(recursive()(7))
+        local function shadows(x)
+            local before=function()return x end
+            do local x=x+5;local function get()return x end;x+=1;print(get())end
+            x+=3
+            return before
+        end
+        print(shadows(2)())
+        local function methods()
+            local t={value=4}
+            function t:add(n) self.value+=n;return self.value end
+            return t
+        end
+        local t=methods();print(t:add(5),t:add(6))
+    "#,
+    ),
+    (
+        "generic_function_vm",
+        r#"
+        local function iterate(object,...)
+            local sum=0
+            for k,v in object do
+                if k==2 then continue end
+                sum+=v
+                for j,w in {4,5} do
+                    sum+=w
+                    if sum>50 then return sum,k,j,... end
+                    if j==1 then break end
+                end
+            end
+            return sum,...
+        end
+        local function iterator(state,index)
+            if index==nil then return 1,10 elseif index==1 then return 2,20 elseif index==2 then return 3,30 end
+        end
+        local function custom(self) return iterator,self,nil end
+        local object=setmetatable({}, {__iter=custom})
+        print(iterate({3,6,9},nil,5))
+        print(iterate(object,'custom',nil,7))
+        local function yieldingIterator(state,index)
+            coroutine.yield('iterator',index)
+            return iterator(state,index)
+        end
+        local function yielding()
+            local sum=0
+            for k,v in yieldingIterator,nil,nil do sum+=v;coroutine.yield(k,sum)end
+            return sum
+        end
+        local thread=coroutine.create(yielding)
+        while coroutine.status(thread)~='dead' do print(coroutine.resume(thread))end
+    "#,
+    ),
+    (
+        "function_vm",
+        r#"
+        value=11;write=13
+        local function pair(x) return x,nil,x+2 end
+        local function none() end
+        local function arithmetic(a,b)
+            local x=0
+            x,x=1,2
+            local t={x,[1]=3}
+            local all={pair(a)}
+            local truncated={(pair(b))}
+            t.key=a
+            t.key+=b
+            value+=1;write=value+write
+            return a+b,a-b,a*b,a/b,a//b,a%b,a^b,a..b,-a,not a,#all,
+                a==b,a~=b,a<b,a<=b,a>b,a>=b,t[1],t.key,x,truncated[1],value,write
+        end
+        local function loop(n,...)
+            local sum=0
+            for i=1,n do
+                i=99
+                if sum==3 then sum+=1;continue end
+                sum+=2
+                if sum>10 then break end
+            end
+            for i=3,1,-1 do sum+=i end
+            repeat local next=sum-1;sum=next;if next==15 then continue end until next<13
+            while sum>10 do sum-=1 end
+            return sum,...
+        end
+        local function logic(a,b)
+            return a and pair(7),a or b,if a then b elseif b then 'fallback' else 'none'
+        end
+        local function interpolation(x) return `result {x} {nil} {true} 100%` end
+        print(arithmetic(7,3))
+        print(loop(9,1,nil,3))
+        print(logic(false,nil));print(logic(true,5));print(interpolation(9))
+        print(select('#',none()),select('#',pair(4)))
+        local function empty() none() end
+        print(select('#',empty()))
+        local function conditions(n)
+            if n<0 then return -1 elseif n==0 then return 0 else return 1 end
+        end
+        print(conditions(-1),conditions(0),conditions(1))
+    "#,
+    ),
+    (
+        "native_method_bridge",
+        r#"
+        local calls=0
+        local object={}
+        local function original(self,x,...) return 'original',x,... end
+        local function replacement(self,x,...) return 'replacement',x,... end
+        object.method=original
+        local function change() object.method=replacement;calls+=1;return calls end
+        local function invoke(receiver,...)
+            return receiver:method(change(),...)
+        end
+        print(invoke(object,'tail',nil,3))
+        print(invoke(object,'tail'))
+        local proxy=setmetatable({}, {__index=function(_,key)print('lookup',key);return original end})
+        print(invoke(proxy,4,nil,6))
+        local function factory(n)
+            return function(delta) n+=delta;return n end
+        end
+        local callback=factory(10)
+        print(callback(3),callback(4))
+    "#,
+    ),
     (
         "scopes",
         r#"
@@ -222,6 +379,7 @@ two'
     (
         "numbers",
         r#"
+        print(select('#',...))
         print(0,-0,1,-1,4294967295,4294967296,9007199254740991,9007199254740992)
         print(0xff_ff,0b1010_1111,.5,1.25,1e-9,1e309,1/(-0),-2^2)
         local x=17; x=x+1;x=x*3;x=x-7;print(x)
@@ -286,7 +444,7 @@ fn seeds_diversify_dispatch_and_runtime_results_are_stable() {
         return;
     };
     let workspace = Workspace::new();
-    let source = "local x=7;x+=1;x*=5;x-=3;print(x,'protected')";
+    let source = "local function protected()local x=7;x+=1;x*=5;x-=3;return x end;print(protected(),'protected')";
     let mut previous = None;
     for seed in 0..16 {
         let mut config = ObfuscationConfig::default()
@@ -298,6 +456,7 @@ fn seeds_diversify_dispatch_and_runtime_results_are_stable() {
             .obfuscate_with_report(source)
             .unwrap();
         assert!(output.report.virtualized_statements >= 4);
+        assert_eq!(output.report.vm_functions, 1);
         assert!(output.report.integrity_checks >= 2);
         assert!(!output.code.contains("protected"));
         assert_ne!(previous.as_ref(), Some(&output.code));
@@ -379,7 +538,11 @@ fn large_regions_are_chunked_and_keep_their_order() {
         let output = Obfuscator::new(config)
             .obfuscate_with_report(&source)
             .unwrap();
-        assert_eq!(output.report.flattened_regions, 3);
+        if level == ProtectionLevel::Paranoid {
+            assert_eq!(output.report.vm_chunks, 1);
+        } else {
+            assert_eq!(output.report.flattened_regions, 3);
+        }
         let path = workspace.0.join(format!("large-{}.luau", level as u8));
         fs::write(&path, output.code).unwrap();
         let actual = run(&runtime, &path);
@@ -391,6 +554,126 @@ fn large_regions_are_chunked_and_keep_their_order() {
         assert_eq!(
             String::from_utf8_lossy(&actual.stdout).replace('\r', ""),
             "45150\n"
+        );
+    }
+}
+
+#[test]
+fn corrupted_instruction_records_fail_before_the_function_runs() {
+    stacker::maybe_grow(
+        16 * 1024 * 1024,
+        32 * 1024 * 1024,
+        corrupt_instruction_records,
+    );
+}
+
+fn corrupt_instruction_records() {
+    use darklua_core::{
+        generator::{DenseLuaGenerator, LuaGenerator},
+        nodes::StringExpression,
+        process::{DefaultVisitor, NodeProcessor, NodeVisitor},
+    };
+    struct CorruptRecord(bool);
+    impl NodeProcessor for CorruptRecord {
+        fn process_string_expression(&mut self, string: &mut StringExpression) {
+            if !self.0 && string.get_value().len() > 128 {
+                let bytes: Vec<_> = string.get_value().iter().map(|byte| byte ^ 1).collect();
+                *string = StringExpression::from_value(bytes);
+                self.0 = true;
+            }
+        }
+    }
+    let Some(runtime) = runtime() else {
+        return;
+    };
+    let workspace = Workspace::new();
+    for cached in [false, true] {
+        for seed in [0, 7] {
+            let mut config = ObfuscationConfig::default()
+                .with_seed(seed)
+                .with_level(ProtectionLevel::Paranoid);
+            config.encrypt_strings = false;
+            config.obfuscate_numbers = false;
+            config.vm_predecode_bytecode = cached;
+            let output = Obfuscator::new(config)
+                .obfuscate_with_report(
+                    "local function f(x)print('executed');return x*5+17 end;f(3)",
+                )
+                .unwrap();
+            assert_eq!(output.report.vm_functions, 1);
+            let mut block = darklua_core::Parser::default().parse(&output.code).unwrap();
+            let mut corruption = CorruptRecord(false);
+            DefaultVisitor::visit_block(&mut block, &mut corruption);
+            assert!(corruption.0);
+            let mut generator = DenseLuaGenerator::default();
+            generator.write_block(&block);
+            let path = workspace.0.join(format!("record-{cached}-{seed}.luau"));
+            fs::write(&path, generator.into_string()).unwrap();
+            let actual = run(&runtime, &path);
+            assert!(!actual.status.success(), "corrupted records must fail");
+            assert!(
+                actual.stdout.is_empty(),
+                "no source side effects before rejection"
+            );
+        }
+    }
+}
+
+#[test]
+fn virtualized_modules_preserve_returns_identity_and_shared_upvalues() {
+    let Some(runtime) = runtime() else {
+        return;
+    };
+    let workspace = Workspace::new();
+    let source = r#"
+        local module={}
+        local state=0
+        function module:add(delta)state+=delta;return state,self end
+        function module:factory()return function(delta)state+=delta;return state end end
+        return module
+    "#;
+    fs::write(workspace.0.join("original.luau"), source).unwrap();
+    for i in 0..3 {
+        let mut config = ObfuscationConfig::default()
+            .with_seed(90)
+            .with_level(if i == 0 {
+                ProtectionLevel::Maximum
+            } else {
+                ProtectionLevel::Paranoid
+            });
+        config.vm_predecode_bytecode = i == 2;
+        let output = Obfuscator::new(config)
+            .obfuscate_with_report(source)
+            .unwrap();
+        if i != 0 {
+            assert_eq!(output.report.vm_chunks, 1);
+            assert_eq!(output.report.vm_functions, 3);
+        }
+        fs::write(workspace.0.join("protected.luau"), output.code).unwrap();
+        let driver = r#"
+            local a=require('./original')
+            local b=require('./protected')
+            local x,first=a:add(3)
+            local y,second=b:add(3)
+            assert(x==y and first==a and second==b)
+            local f=a:factory()
+            local g=b:factory()
+            assert(f(5)==g(5))
+            assert(a:add(7)==b:add(7))
+            assert(f(2)==g(2))
+            print('module-ok')
+        "#;
+        let path = workspace.0.join("driver.luau");
+        fs::write(&path, driver).unwrap();
+        let actual = run(&runtime, &path);
+        assert!(
+            actual.status.success(),
+            "module profile {i}: {}",
+            String::from_utf8_lossy(&actual.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&actual.stdout).replace('\r', ""),
+            "module-ok\n"
         );
     }
 }

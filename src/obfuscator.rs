@@ -1,7 +1,8 @@
 use crate::{
     config::ObfuscationConfig,
     constants::{Constants, Indirection},
-    control_flow::ControlFlow,
+    control_flow::{ControlFlow, ControlVisitor},
+    function_vm::FunctionVm,
     lexer::{lex, Kind},
     names::{Names, Renamer},
     syntax,
@@ -12,7 +13,7 @@ use darklua_core::{
     rules::{ContextBuilder, RemoveTypes, Rule},
     Resources,
 };
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 #[derive(Debug)]
 pub struct ObfuscationError(pub String);
@@ -38,6 +39,17 @@ pub struct ObfuscationReport {
     pub decoy_blocks: usize,
     pub opaque_predicates: usize,
     pub integrity_checks: usize,
+    pub vm_functions: usize,
+    pub vm_chunks: usize,
+    pub vm_chunk_fallback: Option<String>,
+    pub vm_instructions: usize,
+    pub vm_opcode_variants: usize,
+    pub vm_fused_instructions: usize,
+    pub vm_native_functions: usize,
+    pub vm_native_bridges: usize,
+    pub vm_iteration_bridges: usize,
+    pub vm_closure_bridges: usize,
+    pub vm_fallback_reasons: BTreeMap<String, usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -131,12 +143,52 @@ impl Obfuscator {
             FieldVisitor::visit_block(&mut block, &mut indirection);
             report.hidden_fields = indirection.count;
         }
+        let mut vm_runner = None;
+        let (mut vm_data, vm_runtime) = if self.config.virtualize {
+            let mut compiler = FunctionVm::new(&self.config, &mut names, &mut report);
+            vm_runner = Some(compiler.runner().to_owned());
+            RuntimeVisitor::visit_block(&mut block, &mut compiler);
+            compiler.compile_chunk(&mut block);
+            compiler.finish()
+        } else {
+            (Block::default(), Block::default())
+        };
+        if self.config.require_function_vm && report.vm_native_functions != 0 {
+            let reasons = report
+                .vm_fallback_reasons
+                .iter()
+                .map(|(reason, count)| format!("{reason}: {count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ObfuscationError(format!(
+                "{} functions require native fallback ({reasons})",
+                report.vm_native_functions
+            )));
+        }
+        if self.config.require_chunk_vm && report.vm_chunks == 0 {
+            return Err(ObfuscationError(format!(
+                "main chunk requires native fallback ({})",
+                report
+                    .vm_chunk_fallback
+                    .as_deref()
+                    .unwrap_or("chunk compilation disabled")
+            )));
+        }
         let mut constants = Constants::new(&self.config, &mut names, &mut report);
         RuntimeVisitor::visit_block(&mut block, &mut constants);
+        RuntimeVisitor::visit_block(&mut vm_data, &mut constants);
         let mut prefix = constants.prefix();
+        for statement in vm_data.take_statements() {
+            prefix.push_statement(statement);
+        }
+        for statement in vm_runtime.iter_statements().cloned() {
+            prefix.push_statement(statement);
+        }
         if self.config.control_flow_flatten || self.config.virtualize {
             let byte = names.fresh();
             let xor = names.fresh();
+            let mix = names.fresh();
+            let band = names.fresh();
             let fail = names.fresh();
             let mut pass = ControlFlow {
                 config: &self.config,
@@ -144,13 +196,16 @@ impl Obfuscator {
                 report: &mut report,
                 byte: byte.clone(),
                 xor: xor.clone(),
+                mix: mix.clone(),
+                band: band.clone(),
                 fail: fail.clone(),
+                skip_runner: vm_runner.as_deref(),
             };
-            RuntimeVisitor::visit_block(&mut block, &mut pass);
+            ControlVisitor::visit_block(&mut block, &mut pass);
             if report.flattened_regions != 0 {
                 // Capture runtime helpers before source declarations can shadow globals.
                 let helpers = if self.config.virtualize {
-                    format!("local {byte},{xor},{fail}=string.byte,bit32.bxor,error;")
+                    format!("local {byte},{xor},{fail},{band}=string.byte,bit32.bxor,error,bit32.band;local {mix}=(function(x,l,r)return function(s)s=x(s,l(s,13));s=x(s,r(s,17));s=x(s,l(s,5));return s end end)(bit32.bxor,bit32.lshift,bit32.rshift);")
                 } else if self.config.anti_tamper {
                     format!("local {fail}=error;")
                 } else {
@@ -276,5 +331,54 @@ mod tests {
         config.name_max_length = 1;
         let error = Obfuscator::new(config).obfuscate(&source).unwrap_err();
         assert!(error.to_string().contains("namespace exhausted"));
+    }
+
+    #[test]
+    fn function_bytecode_reports_real_coverage_and_strict_fallbacks() {
+        let mut config = ObfuscationConfig::default()
+            .with_seed(33)
+            .with_level(crate::ProtectionLevel::Paranoid);
+        config.require_function_vm = true;
+        config.require_chunk_vm = true;
+        let source = "local function make(n)local function next(x)n+=x;return n*17 end;return next end;local f=make(2);print(f(3))";
+        let output = Obfuscator::new(config.clone())
+            .obfuscate_with_report(source)
+            .unwrap();
+        assert_eq!(output.report.vm_functions, 2);
+        assert_eq!(output.report.vm_chunks, 1);
+        assert_eq!(output.report.vm_native_functions, 0);
+        assert!(output.report.vm_closure_bridges > 0);
+        assert!(output.report.vm_instructions > 15);
+        assert!(output.report.vm_fused_instructions > 0);
+        assert!(output.report.vm_opcode_variants > 10);
+        let error = Obfuscator::new(config.clone())
+            .obfuscate("local function f()return getfenv(1)end;return f")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("environment or stack introspection"));
+        let error = Obfuscator::new(config)
+            .obfuscate("return getfenv(1)")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("main chunk requires native fallback"));
+    }
+
+    #[test]
+    fn hardening_profiles_change_opcode_diversification() {
+        let mut basic = ObfuscationConfig::default()
+            .with_seed(9)
+            .with_level(crate::ProtectionLevel::Paranoid);
+        basic.vm_hardening = "basic".into();
+        let mut max = basic.clone();
+        max.vm_hardening = "max".into();
+        let source = "local function f(x)return x*13+7 end;print(f(2))";
+        let a = Obfuscator::new(basic)
+            .obfuscate_with_report(source)
+            .unwrap();
+        let b = Obfuscator::new(max).obfuscate_with_report(source).unwrap();
+        assert_eq!(b.report.vm_opcode_variants, a.report.vm_opcode_variants * 2);
+        assert_ne!(a.code, b.code);
     }
 }

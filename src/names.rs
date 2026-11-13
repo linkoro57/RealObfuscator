@@ -61,6 +61,9 @@ pub(crate) struct Renamer<'a> {
 }
 
 impl<'a> Renamer<'a> {
+    pub fn preserve_name(&mut self, name: &str) {
+        self.preserve.insert(name.to_owned());
+    }
     pub fn new(names: &'a mut Names) -> Self {
         Self {
             names,

@@ -1,6 +1,8 @@
+mod codec;
 pub mod config;
 mod constants;
 mod control_flow;
+mod function_vm;
 pub mod lexer;
 mod names;
 pub mod obfuscator;

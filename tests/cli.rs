@@ -138,6 +138,48 @@ fn directory_builds_preserve_paths_and_report_applied_vm_work() {
     assert!(output.join("nested/module.LUAU").exists());
     assert!(!output.join("skip.obf.luau").exists());
     assert!(!output.join("notes.txt").exists());
-    assert!(String::from_utf8_lossy(&result.stdout).contains("VM statements: 3"));
+    assert!(String::from_utf8_lossy(&result.stdout).contains("VM main chunks: 1"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn strict_function_vm_reports_coverage_and_preserves_output_on_fallback() {
+    let dir = temp_dir();
+    let input = dir.join("input.luau");
+    let output = dir.join("output.luau");
+    fs::write(&input, "local function f(x)return x*17+3 end;print(f(2))").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args([
+            "--mode",
+            "vm",
+            "--require-function-vm",
+            "--require-chunk-vm",
+            "--stats",
+            "--seed",
+            "42",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout).contains("VM functions: 1"));
+    let previous = fs::read(&output).unwrap();
+    fs::write(&input, "local function f()return getfenv(1)end;return f").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--mode", "vm", "--require-function-vm"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("environment or stack introspection"));
+    assert_eq!(fs::read(&output).unwrap(), previous);
     fs::remove_dir_all(dir).unwrap();
 }

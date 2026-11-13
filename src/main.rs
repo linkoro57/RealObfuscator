@@ -13,11 +13,16 @@ const HELP: &str = "Usage: realobfuscator [OPTIONS] <SOURCE>
 Options:
   -o, --output <PATH>       Output file or directory
       --mode <MODE>         lightweight (default), rename, native, or vm
-                            vm is experimental statement dispatch, not a full Luau VM
+                            vm compiles supported functions to register bytecode
+      --require-function-vm Fail if a function needs native fallback (VM mode)
+      --require-chunk-vm    Fail if the main chunk needs native fallback
+      --vm-functions-only  Compile functions; retain native main-chunk control flow
       --stats               Show counts of transformations actually applied
       --pretty              Format generated code across multiple lines
       --decode <lazy|eager> String decoding strategy
       --keep-types          Preserve Luau type annotations and declarations
+      --string-cache        Retain decoded strings for speed
+      --no-string-cache     Decode strings without retaining a plaintext cache
       --vm-rolling          Decode VM instructions while reading (default)
       --vm-cached           Cache decoded VM instructions
       --vm-packed           Use compact VM payloads
@@ -67,6 +72,10 @@ struct Args {
     pretty: bool,
     keep_types: bool,
     decode: Option<String>,
+    cache_strings: Option<bool>,
+    require_function_vm: bool,
+    require_chunk_vm: bool,
+    functions_only: bool,
 }
 
 fn usage(message: &str) -> ! {
@@ -111,6 +120,11 @@ fn parse() -> Args {
             "--stats" => args.stats = true,
             "--pretty" => args.pretty = true,
             "--keep-types" => args.keep_types = true,
+            "--string-cache" => args.cache_strings = Some(true),
+            "--no-string-cache" => args.cache_strings = Some(false),
+            "--require-function-vm" => args.require_function_vm = true,
+            "--require-chunk-vm" => args.require_chunk_vm = true,
+            "--vm-functions-only" => args.functions_only = true,
             "--decode" => args.decode = Some(value(&mut it, &option)),
             "--seed" => {
                 args.seed = Some(
@@ -229,6 +243,17 @@ fn config(args: &Args) -> ObfuscationConfig {
     }
     config.minify = !args.pretty;
     config.strip_types = !args.keep_types;
+    config.require_function_vm = args.require_function_vm;
+    config.require_chunk_vm = args.require_chunk_vm;
+    if args.functions_only {
+        if !config.virtualize {
+            usage("--vm-functions-only requires VM mode")
+        }
+        config.virtualize_chunk = false;
+    }
+    if let Some(cache) = args.cache_strings {
+        config.cache_strings = cache;
+    }
     if let Some(value) = &args.hardening {
         if !config.virtualize {
             usage("--vm-hardening requires VM mode")
@@ -303,6 +328,29 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
                     report.renamed_bindings, report.encrypted_strings, report.string_references, report.obfuscated_numbers,
                     report.hidden_fields, report.flattened_regions, report.virtualized_statements, report.decoy_blocks,
                     report.opaque_predicates, report.integrity_checks);
+                println!("  VM functions: {}; bytecode instructions: {}; opcode variants: {}; fused instructions: {}; native functions: {}; method bridges: {}",
+                    report.vm_functions, report.vm_instructions, report.vm_opcode_variants, report.vm_fused_instructions, report.vm_native_functions, report.vm_native_bridges);
+                if report.vm_iteration_bridges != 0 {
+                    println!(
+                        "  native iteration bridges: {}",
+                        report.vm_iteration_bridges
+                    );
+                }
+                if report.vm_closure_bridges != 0 {
+                    println!(
+                        "  captured-cell closure factories: {}",
+                        report.vm_closure_bridges
+                    );
+                }
+                if obfuscator.config.virtualize_chunk && obfuscator.config.virtualize {
+                    println!("  VM main chunks: {}", report.vm_chunks);
+                    if let Some(reason) = &report.vm_chunk_fallback {
+                        println!("    main chunk fallback: {reason}");
+                    }
+                }
+                for (reason, count) in &report.vm_fallback_reasons {
+                    println!("    native fallback: {reason}: {count}");
+                }
             }
         }
         Ok::<_, String>(())

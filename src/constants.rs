@@ -110,17 +110,12 @@ impl<'a> Constants<'a> {
                     break id;
                 }
             };
-            let seed = self.names.rng.range(1, 256) as u32;
-            let multiplier = (self.names.rng.range(1, 128) * 2 + 1) as u32;
-            let step = self.names.rng.range(1, 256) as u32;
-            let mut state = seed;
-            let mut encrypted = Vec::with_capacity(bytes.len());
+            let seed = self.names.rng.range(1, 1u64 << 32) as u32;
+            let multiplier = self.names.rng.next_u64() as u32;
+            let step = self.names.rng.range(1, 1u64 << 32) as u32;
+            let encrypted = crate::codec::encode(bytes, seed, multiplier, step);
             let mut checksum = 0u64;
-            for (i, &byte) in bytes.iter().enumerate() {
-                let cipher = u32::from(byte) ^ state;
-                encrypted.push(cipher as u8);
-                state = (state * multiplier + cipher + ((i + 1) as u64 * step as u64 % 256) as u32)
-                    % 256;
+            for &byte in bytes {
                 checksum = (checksum * 65599 + u64::from(byte)) % 2147483647;
             }
             self.pool.push(Constant {
@@ -191,8 +186,11 @@ impl<'a> Constants<'a> {
         let char_fn = self.names.fresh();
         let concat = self.names.fresh();
         let bxor = self.names.fresh();
+        let shl = self.names.fresh();
+        let shr = self.names.fresh();
+        let band = self.names.fresh();
         let fail = self.names.fresh();
-        source.push_str(&format!("local {byte},{char_fn},{concat},{bxor},{fail}=string.byte,string.char,table.concat,bit32.bxor,error;local {pool}={{"));
+        source.push_str(&format!("local {byte},{char_fn},{concat},{bxor},{fail},{shl},{shr},{band}=string.byte,string.char,table.concat,bit32.bxor,error,bit32.lshift,bit32.rshift,bit32.band;local {pool}={{"));
         let packed = !self.config.virtualize || self.config.vm_pack_constants;
         for constant in &self.pool {
             let payload = if packed {
@@ -213,11 +211,13 @@ impl<'a> Constants<'a> {
                 constant.id, constant.seed, constant.multiplier, constant.step, constant.checksum
             ));
         }
-        source.push_str(&format!("}};local {cache}={{}};local function {}(id)local cached={cache}[id];if cached~=nil then return cached end;local entry={pool}[id];if entry==nil then {fail}()end;local data=entry[1];local state=entry[2];local out={{}};local hash=0;for i=1,#data do local c={};local v={bxor}(c,state);out[i]={char_fn}(v);state=(state*entry[3]+c+(i*entry[4])%256)%256;{}end;{}local result={concat}(out);{cache}[id]=result;return result end;",
+        source.push_str(&format!("}};local {cache}={{}};local function {}(id){}local entry={pool}[id];if entry==nil then {fail}()end;local data=entry[1];local state={bxor}(entry[2],entry[4]);local out={{}};local hash=0;for i=1,#data do local c={};state={bxor}(state,{shl}(state,13));state={bxor}(state,{shr}(state,17));state={bxor}(state,{shl}(state,5));local v={bxor}(c,{band}(state,255));out[i]={char_fn}(v);state=(state+entry[3]+c+i)%4294967296;{}end;{}local result={concat}(out);{}return result end;",
             self.decoder,
+            if self.config.cache_strings { format!("local cached={cache}[id];if cached~=nil then return cached end;") } else { String::new() },
             if packed { format!("{byte}(data,i)") } else { "data[i]".into() },
             if self.config.anti_tamper { "hash=(hash*65599+v)%2147483647;" } else { "" },
             if self.config.anti_tamper { format!("if hash~=entry[5] then {fail}()end;") } else { String::new() },
+            if self.config.cache_strings { format!("{cache}[id]=result;") } else { String::new() },
         ));
         if self.config.anti_tamper {
             self.report.integrity_checks += self.pool.len();

@@ -1,6 +1,8 @@
 # RealObfuscator
 
-A Rust command-line obfuscator for Luau and Roblox projects. Version **2.1.0** replaces token-based rewriting with a parsed Luau syntax tree, scope-aware renaming, diversified constant encoding, and conservative control-flow dispatch.
+A Rust command-line obfuscator for Luau and Roblox projects. Version **2.2.0** adds a private register-bytecode compiler for supported main chunks and functions, captured-variable cells, shuffled instruction records, opcode aliases, fused operations, lazy constants and per-record integrity checks to the AST-based native pipeline.
+
+The [public Luraph research inventory](docs/luraph-research.md) links the GitHub, original technical analysis, Reddit discussion and official historical documentation consulted, and distinguishes implemented techniques, compatibility bridges and unknown/private features. It is not a claim of reproducing every Luraph protection.
 
 ## Build and run
 
@@ -13,8 +15,8 @@ realobfuscator script.luau
 # Native transformations, with a report of applied work
 realobfuscator script.luau --mode native --stats
 
-# Experimental encoded statement dispatch
-realobfuscator script.luau --mode vm --vm-packed --stats
+# Function bytecode with maximum diversification and incremental decoding
+realobfuscator script.luau --mode vm --vm-hardening max --vm-rolling --vm-packed --stats
 
 # Process a project into a separate directory
 realobfuscator src --output build --mode native
@@ -29,9 +31,13 @@ On Windows the executable is `target/release/realobfuscator.exe`. Default file o
 | `rename` | Rename local bindings and parameters, preserve global/member names, minify. |
 | `lightweight` (default) | Rename plus a shuffled, deduplicated string pool and eager cached decoding. |
 | `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch, opaque predicates and decoy handlers. |
-| `vm` | Native constant transformations plus an experimental interpreter for compatible statement sequences, with randomized opcodes, feedback-encoded instruction tapes and balanced dispatch trees. |
+| `vm` | Register-bytecode compilation for supported chunks/functions; captured-variable cells; randomized physical records, operand layouts and opcode aliases; constant fusion; incremental decoding and record integrity. Remaining compatible statement regions use conservative dispatch. |
 
-The VM interprets **assignment, compound-assignment and call statements**. Their handlers contain transformed native Luau. Declarations, loops, branches, returns, `break` and `continue` retain their original scopes and control behavior; eligible sequences inside nested blocks are processed separately. It is **not a complete Luau bytecode virtualizer**. A chunk containing only `return 1` has zero virtualized statements. `--stats` reports this explicitly.
+The function compiler covers local bindings, assignments, native arithmetic/comparison operators, tables, indexing, short-circuit logic, interpolated strings, calls, recursive functions, closures, varargs, multiple returns, branches, loops, `break` and `continue`. Each binding uses a mutable cell; closure factories retain the cells present at creation, preserving captures across loop iterations and writes after a function returns. Method calls and generalized iteration use native protocol bridges with VM registers/body execution to preserve lookup order, `__iter` and yielding behavior.
+
+Functions needing unsupported constructs retain their native bodies. Direct environment/stack introspection, preserved type declarations in a candidate function, and closures embedded in native bridge expressions can require fallback. Child functions may still be compiled independently. `--stats` reports compiled functions, encoded instructions, native functions and fallback reasons, and counts method, iteration and closure bridges separately. `--require-function-vm` rejects whole-function fallbacks before writing output; it still permits the reported native protocol bridges.
+
+The main chunk is compiled after its child functions. A native fallback reason is reported when it cannot compile, and `--require-chunk-vm` can reject such an output. `--vm-functions-only` explicitly keeps main-chunk control flow native. Uncompiled chunks retain the earlier conservative backend: assignment, compound-assignment and call handlers contain transformed native Luau, while declarations and control transfers keep their scopes. A chunk containing only `return 1` can now compile to register bytecode. The register interpreter is **not the official Luau binary bytecode format**, and this is not a claim of complete virtualization for every Luau construct.
 
 Native control-flow dispatch requires at least three consecutive compatible statements. Regions are capped at 128 statements to bound interpreter size; dispatch uses a diversified binary decision tree instead of scanning every handler. Dead-code density controls unreachable handlers inside these regions. Profiles describe enabled passes, and the statistics describe transformations actually applied.
 
@@ -45,6 +51,16 @@ realobfuscator script.luau --mode native --seed 42 --stats
 realobfuscator script.luau --mode vm --vm-cached --vm-packed
 realobfuscator script.luau --mode vm --vm-rolling --vm-unpacked
 
+# Require chunk and function compilation, with no whole-body fallbacks
+realobfuscator script.luau --mode vm --require-function-vm --require-chunk-vm --stats
+
+# Compile functions while retaining the main chunk's native control flow
+realobfuscator script.luau --mode vm --vm-functions-only --stats
+
+# Explicit speed / plaintext-cache tradeoff (VM mode disables string caching by default)
+realobfuscator script.luau --mode vm --string-cache --vm-cached
+realobfuscator script.luau --mode native --no-string-cache
+
 # Preserve type syntax or inspect formatted output
 realobfuscator script.luau --keep-types --pretty
 
@@ -56,6 +72,8 @@ realobfuscator --help-all
 
 Release builds use operating-system randomness. An explicit seed produces identical output across processes for the same input and configuration, and different source modules derive different random streams from that seed. Do not use fixed development seeds for diversified releases.
 
+`basic`, `client-max` and `max` emit respectively two, three and four opcode aliases per used register operation. Each compiled chunk/function receives a new physical record order, operand-word layout and encoding parameters. Packed mode uses per-record RLE when it reduces size, followed by 32-bit feedback encoding. Rolling mode decodes records as needed; cached mode decodes and retains the records for faster execution. Maximum hardening keeps constants in an invocation-local cache rather than a shared plaintext prototype cache. These choices have significant size and execution costs; lightweight remains the default profile.
+
 ## Compatibility and behavior
 
 - The [darklua](https://github.com/seaofvoices/darklua) / [full_moon](https://github.com/Kampfkarren/full-moon) AST frontend handles supported Luau syntax including interpolated strings, type declarations, generics, casts, compound assignments, floor division, and generalized iteration. Unsupported or malformed syntax returns an error before output is replaced.
@@ -63,8 +81,8 @@ Release builds use operating-system randomness. An explicit seed produces identi
 - Quoted, long-bracket and binary strings share the same encoding pipeline. Luau escapes are decoded by the parser rather than approximated. Interpolation keeps the order of argument evaluation and uses Luau's `%*` formatting.
 - Property reads, writes and table keys can be redirected through encoded string constants. Colon method calls remain intact to preserve Roblox method behavior and single receiver evaluation. Method names and named function declarations may remain visible.
 - Integer transformations are restricted to exact unsigned 32-bit values. Fractional values and larger doubles retain their original values. Numeric keys and decoder functions are captured before source locals can shadow built-ins.
-- Type syntax is removed using AST nodes by default. `--keep-types` retains it; runtime transformations skip type-only code. `--!native` and optimization directives in the original leading comments are retained. Output uses `--!nocheck` and `--!nolint`.
-- The optional library `wrap_in_iife` setting defaults to `false`, preserving ordinary stack/environment behavior. Explicitly enabling it adds a function frame and requires stripped types.
+- Type syntax is removed using AST nodes by default. `--keep-types` retains syntax outside replaced VM bodies and function signatures; type declarations in a candidate body can cause native fallback. Runtime transformations skip type functions. `--!native` and optimization directives in the original leading comments are retained. Output uses `--!nocheck` and `--!nolint`.
+- The optional library `wrap_in_iife` setting defaults to `false`. Explicitly enabling it adds a function frame and requires stripped types. VM calls and native bridges themselves add interpreter frames; stack/environment introspection is not transparent through virtualization.
 - Generated code is parsed again before writing. Files are written through unique, exclusively created temporary files; invalid input leaves existing output intact.
 
 ## Library API
@@ -84,9 +102,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`obfuscate()` continues to return just the generated source. `obfuscate_with_report()` returns source and counts for original bindings, unique encoded strings, string references, numbers, hidden fields, dispatch regions, VM statements, decoys, predicates and integrity checks.
+`obfuscate()` continues to return just the generated source. `obfuscate_with_report()` returns source and counts for original bindings, unique encoded strings, string references, numbers, hidden fields, dispatch regions, VM statements, decoys, predicates and integrity checks. It also reports `vm_chunks`, `vm_chunk_fallback`, `vm_functions`, `vm_instructions`, `vm_opcode_variants`, `vm_fused_instructions`, native protocol/factory bridges, `vm_native_functions`, and a reason/count map in `vm_fallback_reasons`.
 
-Protection levels map to these passes: `Minimal` enables renaming, strings and numbers; `Standard` adds native dispatch; `Maximum` adds property indirection and integrity checks; `Paranoid` enables experimental statement dispatch.
+Protection levels map to these passes: `Minimal` enables renaming, strings and numbers; `Standard` adds native dispatch; `Maximum` adds property indirection and integrity checks; `Paranoid` enables the function-bytecode backend with maximal diversification, incremental decoding and disabled retained string caching.
 
 ## Verification
 
@@ -96,7 +114,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-The runtime suite compares the stdout of original and generated scripts with the official Luau interpreter, across profiles, payload formats, decoder strategies and seeds. It also checks corruption rejection and large dispatch regions. See [tests/README.md](tests/README.md) to require execution tests on another machine.
+The runtime suite compares original and generated scripts in the official Luau interpreter across profiles, payload formats, decoder strategies and seeds. It tests arithmetic, aliasing, recursive/shared closures and loop captures, nil holes, method lookup order, native/custom iteration, yields, strict coverage, corruption rejection and large regions. See [tests/README.md](tests/README.md) to require execution tests on another machine.
 
 ## Limits
 
@@ -104,7 +122,9 @@ Obfuscation increases analysis effort; keys, decoders and handlers still ship to
 
 More dispatch, constants and decoys increase output size, memory use, compile time and execution overhead. Generated helpers consume Luau registers/locals. Error line numbers, local names and introspection of transformed code can change. Test actual Roblox workloads and target devices before deployment. Keep valuable authoritative logic on the server.
 
-There is no benchmark demonstrating superiority to Luraph, and this project makes no such claim. Full expression/closure virtualization, resistance to dedicated devirtualizers and adversarial evaluation are separate, substantial areas of work.
+A [local performance probe](docs/performance.md) records the size and execution costs of native, cached VM and maximal rolling VM profiles on the same small numeric workload. The maximal profile is much slower on that loop; it is not a default recommendation for frame-sensitive code.
+
+There is no benchmark demonstrating superiority to Luraph, minimum reverse-engineering time, or resistance to dedicated devirtualizers. The research inventory explicitly records private or platform-specific mechanisms that have not been reproduced. Independent adversarial evaluation and Roblox compatibility/performance testing remain necessary.
 
 ## License
 

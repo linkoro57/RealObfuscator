@@ -33,6 +33,7 @@ pub struct ObfuscationConfig {
     pub level: Option<ProtectionLevel>,
     pub rename_identifiers: bool,
     pub encrypt_strings: bool,
+    pub cache_strings: bool,
     pub obfuscate_numbers: bool,
     pub control_flow_flatten: bool,
     pub opaque_predicates: bool,
@@ -40,6 +41,9 @@ pub struct ObfuscationConfig {
     pub table_indirection: bool,
     pub anti_tamper: bool,
     pub virtualize: bool,
+    pub virtualize_chunk: bool,
+    pub require_function_vm: bool,
+    pub require_chunk_vm: bool,
     pub name_min_length: usize,
     pub name_max_length: usize,
     pub string_decode_mode: String,
@@ -70,6 +74,7 @@ impl Default for ObfuscationConfig {
             level: None,
             rename_identifiers: true,
             encrypt_strings: true,
+            cache_strings: true,
             obfuscate_numbers: true,
             control_flow_flatten: true,
             opaque_predicates: true,
@@ -77,6 +82,9 @@ impl Default for ObfuscationConfig {
             table_indirection: true,
             anti_tamper: true,
             virtualize: false,
+            virtualize_chunk: true,
+            require_function_vm: false,
+            require_chunk_vm: false,
             name_min_length: 8,
             name_max_length: 14,
             string_decode_mode: "lazy".into(),
@@ -119,6 +127,7 @@ impl ObfuscationConfig {
         self.table_indirection = n >= 3;
         self.anti_tamper = n >= 3;
         self.virtualize = n >= 4;
+        self.cache_strings = n < 4;
         if self.virtualize {
             self.vm_hardening = "max".into();
             self.vm_pack_bytecode = true;
@@ -133,6 +142,12 @@ impl ObfuscationConfig {
         c
     }
     pub fn validate(&self) -> Result<(), String> {
+        if self.require_chunk_vm && (!self.virtualize || !self.virtualize_chunk) {
+            return Err("require_chunk_vm requires VM mode with chunk compilation enabled".into());
+        }
+        if self.require_function_vm && !self.virtualize {
+            return Err("require_function_vm requires VM mode".into());
+        }
         if self.name_min_length == 0 {
             return Err("name_min_length must be at least 1".into());
         }

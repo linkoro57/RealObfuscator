@@ -8,7 +8,7 @@ use crate::{
 };
 use darklua_core::{
     nodes::*,
-    process::{NodePostProcessor, NodeProcessor},
+    process::{NodePostProcessor, NodePostVisitor, NodeProcessor},
 };
 use std::collections::HashSet;
 
@@ -18,7 +18,30 @@ pub(crate) struct ControlFlow<'a> {
     pub report: &'a mut ObfuscationReport,
     pub byte: String,
     pub xor: String,
+    pub mix: String,
+    pub band: String,
     pub fail: String,
+    pub skip_runner: Option<&'a str>,
+}
+
+pub(crate) struct ControlVisitor;
+impl NodePostVisitor<ControlFlow<'_>> for ControlVisitor {
+    fn visit_type_function_statement(_: &mut TypeFunctionStatement, _: &mut ControlFlow<'_>) {}
+    fn visit_type(_: &mut Type, _: &mut ControlFlow<'_>) {}
+    fn visit_block(block: &mut Block, pass: &mut ControlFlow<'_>) {
+        if let (Some(runner), Some(LastStatement::Return(ret))) =
+            (pass.skip_runner, block.get_last_statement())
+        {
+            if ret.iter_expressions().next().is_some_and(|value| matches!(value, Expression::Call(call) if matches!(call.get_prefix(), Prefix::Identifier(name) if name.get_name() == runner))) { return; }
+        }
+        for statement in block.iter_mut_statements() {
+            Self::visit_statement(statement, pass);
+        }
+        if let Some(last) = block.mutate_last_statement() {
+            Self::visit_last_statement(last, pass);
+        }
+        pass.process_after_block(block);
+    }
 }
 
 impl ControlFlow<'_> {
@@ -116,21 +139,14 @@ impl ControlFlow<'_> {
             let cipher_name = self.names.fresh();
             let iterator = self.names.fresh();
             let hash = self.names.fresh();
-            let seed = self.names.rng.range(1, 256);
-            let multiplier = match self.config.vm_hardening.as_str() {
-                "max" => 97,
-                "client-max" => 65,
-                _ => 33,
-            };
-            let step = self.names.rng.range(1, 256);
-            let mut rolling = seed;
-            let mut encrypted = Vec::new();
+            let seed = self.names.rng.range(1, 1u64 << 32) as u32;
+            let salt = self.names.rng.next_u64() as u32;
+            let step = self.names.rng.range(1, 1u64 << 32) as u32;
+            let plaintext: Vec<_> = ids[..count].iter().map(|opcode| *opcode as u8).collect();
+            let encrypted = crate::codec::encode(&plaintext, seed, step, salt);
             let mut checksum = 0u64;
-            for (i, opcode) in ids[..count].iter().enumerate() {
-                let cipher = opcode ^ rolling;
-                encrypted.push(cipher as u8);
-                rolling = (rolling * multiplier + cipher + ((i + 1) as u64 * step) % 256) % 256;
-                checksum = (checksum * 257 + cipher) % 2147483647;
+            for &cipher in &encrypted {
+                checksum = (checksum * 257 + u64::from(cipher)) % 2147483647;
             }
             let payload = if self.config.vm_pack_bytecode {
                 syntax::byte_literal(&encrypted)
@@ -158,9 +174,9 @@ impl ControlFlow<'_> {
             }
             if self.config.vm_predecode_bytecode {
                 let decoded = self.names.fresh();
-                source.push_str(&format!("local {decoded}={{}};local {key}={seed};for {iterator}=1,#{tape} do local {cipher_name}={};{decoded}[{iterator}]={}({cipher_name},{key});{key}=({key}*{multiplier}+{cipher_name}+({iterator}*{step})%256)%256 end;local {pc}=1;while {pc}<=#{decoded} do local {state}={decoded}[{pc}];{pc}={pc}+1;", read(&iterator), self.xor));
+                source.push_str(&format!("local {decoded}={{}};local {key}={}({seed},{salt});for {iterator}=1,#{tape} do local {cipher_name}={};{key}={}({key});{decoded}[{iterator}]={}({cipher_name},{}({key},255));{key}=({key}+{step}+{cipher_name}+{iterator})%4294967296 end;local {pc}=1;while {pc}<=#{decoded} do local {state}={decoded}[{pc}];{pc}={pc}+1;", self.xor, read(&iterator), self.mix, self.xor, self.band));
             } else {
-                source.push_str(&format!("local {pc}=1;local {key}={seed};while {pc}<=#{tape} do local {cipher_name}={};local {state}={}({cipher_name},{key});{key}=({key}*{multiplier}+{cipher_name}+({pc}*{step})%256)%256;{pc}={pc}+1;", read(&pc), self.xor));
+                source.push_str(&format!("local {pc}=1;local {key}={}({seed},{salt});while {pc}<=#{tape} do local {cipher_name}={};{key}={}({key});local {state}={}({cipher_name},{}({key},255));{key}=({key}+{step}+{cipher_name}+{pc})%4294967296;{pc}={pc}+1;", self.xor, read(&pc), self.mix, self.xor, self.band));
             }
         } else {
             source.push_str(&format!(
