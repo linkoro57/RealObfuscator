@@ -111,9 +111,25 @@ fn scattered_descriptors_and_fragmented_binary_strings_preserve_behavior() {
 }
 
 fn run(runtime: &Path, path: &Path) -> Output {
+    // Resolve short Windows temp paths and run from the fixture directory. Luau's
+    // standalone require resolver cannot reliably restore a context reached from
+    // a different drive through an 8.3 path (as on hosted Windows runners).
+    let runtime = fs::canonicalize(runtime).unwrap();
+    let directory = fs::canonicalize(path.parent().unwrap()).unwrap();
+    #[cfg(windows)]
+    let directory = if matches!(
+        directory.components().next(),
+        Some(std::path::Component::Prefix(prefix))
+            if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
+    ) {
+        PathBuf::from(&directory.to_string_lossy()[4..])
+    } else {
+        directory
+    };
     // A broken dispatcher must fail the test, rather than hang the entire suite.
     let mut child = Command::new(runtime)
-        .arg(path)
+        .current_dir(directory)
+        .arg(path.file_name().unwrap())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

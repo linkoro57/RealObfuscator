@@ -35,6 +35,10 @@ Without an interpreter, runtime cases print a skip message. CI must set `REQUIRE
 
 The interpreter does not provide Roblox services or validate Roblox's native NAMECALL behavior. Smoke-test generated game modules in Roblox Studio as well.
 
+Runtime fixtures execute from their own resolved directory. This avoids Luau's
+standalone `require` context errors with Windows 8.3 temporary paths and a checkout
+on a different drive, including hosted Windows runners.
+
 The profile matrix includes main-chunk compilation, functions-only mode, preserved types, disabled renaming, disabled integrity checks and cache/payload variants. A module-driver test loads original and protected files through Luau `require` and checks returned object identity, method results and shared state after module initialization.
 
 Method-argument callbacks are checked with strict chunk/function coverage to prevent a native fallback from hiding a regression. Cases include callbacks inside table arguments, loop-local capture retention, shared writes, local/parameter/implicit-self shadowing, nested returned closures, argument-side method replacement, nil holes and yielding callbacks. The unrenamed profile explicitly enables the legacy arithmetic predicates so their optional path remains covered. CLI checks verify that native fallback warnings appear without `--stats` and respect `--quiet`.
