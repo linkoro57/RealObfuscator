@@ -1,0 +1,82 @@
+# Browser playground and GitHub Pages
+
+The browser app uses the same Rust library as the CLI, compiled to WebAssembly.
+Source, settings and output stay in the browser. There is no obfuscation API,
+analytics, third-party runtime CDN, account, or GitHub token in the page. The app
+does not execute input or output scripts and does not persist source in storage.
+
+## Interface
+
+Paste source or load a `.lua` / `.luau` file, select a profile and generate the
+output. Advanced controls expose the public transformation, VM, string, naming,
+formatting and coverage settings. A seed is optional and is passed as decimal text
+to preserve all unsigned 64-bit values. The target runtime is Luau / Roblox.
+
+The interface supports output copying, `.obf.luau` downloads, applied statistics,
+native fallback warnings, a JSON report, error recovery and cancellation. Editing
+the source or settings invalidates stale output. Default profiles match the CLI.
+An isolated Web Worker handles generation, and terminating that worker cancels a
+job. Source is limited to 1 MiB and jobs to 120 seconds; large or deeply nested
+scripts can still exceed browser memory/stack limits. Use the native CLI for them.
+
+The browser bridge reserves a 32 MiB Wasm stack instead of native stack switching.
+Browser randomness comes from Web Crypto through `getrandom`. Native builds retain
+their existing OS randomness and stack-growth path.
+
+Obfuscation increases analysis effort but does not establish client-side secrecy;
+the [static extraction audit](string-audit.md) remains applicable to browser output.
+
+## Build and preview
+
+Requirements: stable Rust, Node.js 22 or newer, the `wasm32-unknown-unknown` target,
+and a Clang installation with WebAssembly support. Some minimal Windows Clang
+distributions only support x86 and cannot compile the C dependency.
+
+```sh
+rustup target add wasm32-unknown-unknown
+npm ci
+npm run build:web
+npm run preview:web
+```
+
+Open `http://127.0.0.1:4173`. Generated files are in `web/dist` and `web/pkg`, both
+ignored by Git. Serve through HTTP; ES modules and Workers do not work from
+`file://`. Resource paths are relative and support a repository Pages subpath.
+
+For a Windows WASI SDK compiler, set `CC_wasm32_unknown_unknown` to its `clang.exe`
+and `AR_wasm32_unknown_unknown` to its `llvm-ar.exe` before building. No SDK is
+vendored. Linux CI installs normal Clang/LLVM from the runner's package manager.
+
+## Verify
+
+```sh
+cargo test -p realobfuscator-web --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo fmt --all --check
+npx playwright install chromium
+npm run test:web
+```
+
+Browser tests call the actual Wasm engine for every preset, check deterministic
+64-bit seeds, invalid source/settings, output downloads, local file input, stale
+results, cancellation, native warnings and responsive layouts. On Windows, tests
+use an existing Edge installation if present. When the local official Luau test
+interpreter is available, the browser-generated hardened script is also executed
+and its output checked. It is not executed by the website.
+
+## Publish
+
+`.github/workflows/pages.yml` runs on pushes to `main`, pull requests and manual
+dispatch. It validates the Rust bridge, builds the Wasm engine and site, runs real
+browser tests, then uploads and deploys the static artifact with the official
+Pages actions. Pull requests only build/test and never deploy. No private source
+used in the website is committed to GitHub or sent to this workflow.
+
+Enable **Settings → Pages → Build and deployment → Source → GitHub Actions** on
+the repository. The default URL is
+`https://linkoro57.github.io/RealObfuscator/`. Deployment uses the `github-pages`
+environment and repository `GITHUB_TOKEN` with `pages: write` and `id-token: write`
+limited to the deployment job; the build job only reads repository contents.
+
+This deployment process follows the official
+[custom Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).

@@ -1,4 +1,9 @@
 /target/
+/node_modules/
+/web/pkg/
+/web/dist/
+/test-results/
+/playwright-report/
 /tests/runtime/
 
 # Legacy/intermediate artifacts

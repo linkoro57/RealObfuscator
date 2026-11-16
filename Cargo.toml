@@ -14,7 +14,17 @@ categories = ["command-line-utilities"]
 darklua = "0.19.0"
 full_moon = { version = "2.2.0", features = ["roblox"] }
 getrandom = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 stacker = "0.1.25"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[workspace]
+members = ["web/engine"]
+default-members = ["."]
+resolver = "2"
 
 [lib]
 name = "realobfuscator"

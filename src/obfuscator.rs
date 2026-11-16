@@ -109,9 +109,17 @@ impl Obfuscator {
     ) -> Result<ObfuscationOutput, ObfuscationError> {
         // The Luau parser and AST visitors recurse. Windows' default main-thread
         // stack is too small even for ordinary scripts in debug builds.
-        stacker::maybe_grow(16 * 1024 * 1024, 32 * 1024 * 1024, || {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            stacker::maybe_grow(16 * 1024 * 1024, 32 * 1024 * 1024, || {
+                self.obfuscate_inner(source)
+            })
+        }
+        // Browser builds reserve a 32 MiB linear-memory stack at link time.
+        #[cfg(target_arch = "wasm32")]
+        {
             self.obfuscate_inner(source)
-        })
+        }
     }
 
     fn obfuscate_inner(&self, source: &str) -> Result<ObfuscationOutput, ObfuscationError> {

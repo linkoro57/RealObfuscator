@@ -11,6 +11,10 @@ interpreter. See [compatibility and behavior](#compatibility-and-behavior).
 
 [Quick start](#build-and-run) | [Profiles](#profiles) | [FAQ](#frequently-asked-questions) | [Benchmarks](docs/benchmarks.md)
 
+The [browser playground](https://linkoro57.github.io/RealObfuscator/) runs the same
+Rust engine locally through WebAssembly, with file input, advanced settings and
+downloadable output. See [browser build and GitHub Pages deployment](docs/browser.md).
+
 | Project fact | Details |
 | --- | --- |
 | Source repository | [linkoro57/RealObfuscator](https://github.com/linkoro57/RealObfuscator) |
