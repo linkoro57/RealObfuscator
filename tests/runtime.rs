@@ -61,7 +61,7 @@ fn scattered_descriptors_and_fragmented_binary_strings_preserve_behavior() {
         local first='1234567890123456789012345678901'
         local second='12345678901234567890123456789012'
         local binary='\000\255\001\254\002\253\003\2521234567890123456789012345678901234567890'
-        local unicode='été, 日本語, café, 😀 — une chaîne suffisamment longue'
+        local unicode='Unicode: 日本語, 😀 — a sufficiently long byte-preserving string'
         local function identity(x) return x end
         local sugar=identity 'a sufficiently long string passed without parentheses'
         local strings={first,second,binary,unicode,sugar}

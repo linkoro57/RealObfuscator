@@ -4,56 +4,56 @@ const number = (key, label, min, max, help = '') => ({ key, label, min, max, hel
 const select = (key, label, values, help = '') => ({ key, label, values, help, type: 'select' });
 export const groups = [
   { title: 'Transformations', fields: [
-    toggle('rename_identifiers', 'Renommer les variables locales'),
-    toggle('encrypt_strings', 'Encoder les chaînes'),
-    toggle('split_strings', 'Fragmenter les longues chaînes', 'Appliqué aux chaînes d’au moins 32 octets, lorsque leur encodage est activé.'),
-    toggle('obfuscate_numbers', 'Transformer les entiers'),
-    toggle('table_indirection', 'Masquer les accès aux propriétés'),
-    toggle('control_flow_flatten', 'Aplatir le flux de contrôle'),
-    toggle('inject_dead_code', 'Ajouter des blocs leurres'),
-    toggle('anti_tamper', 'Vérifier l’intégrité des données', 'Détecte certaines modifications des données encodées. Les contrôles restent modifiables.'),
+    toggle('rename_identifiers', 'Rename local bindings'),
+    toggle('encrypt_strings', 'Encode strings'),
+    toggle('split_strings', 'Split long strings', 'Applied to strings of at least 32 bytes when string encoding is enabled.'),
+    toggle('obfuscate_numbers', 'Transform integers'),
+    toggle('table_indirection', 'Hide property access'),
+    toggle('control_flow_flatten', 'Flatten control flow'),
+    toggle('inject_dead_code', 'Add decoy blocks'),
+    toggle('anti_tamper', 'Check data integrity', 'Detects some changes to encoded data. The checks can still be modified.'),
   ] },
-  { title: 'Machine virtuelle', fields: [
-    toggle('virtualize', 'Activer la virtualisation'),
-    toggle('virtualize_chunk', 'Virtualiser le bloc principal'),
-    select('vm_hardening', 'Diversification VM', [['basic', 'Basic'], ['client-max', 'Client max'], ['max', 'Max']]),
-    toggle('vm_scatter_data', 'Disperser les tables VM', 'Augmente la taille et le coût de chargement.'),
-    toggle('vm_bind_strings', 'Lier les chaînes aux prototypes'),
-    toggle('vm_pack_bytecode', 'Compacter le bytecode'),
-    toggle('vm_pack_constants', 'Compacter les constantes'),
-    toggle('vm_predecode_bytecode', 'Conserver les instructions décodées', 'Plus rapide à l’exécution, avec un cache des instructions en clair.'),
-    toggle('require_function_vm', 'Refuser les fonctions non virtualisées'),
-    toggle('require_chunk_vm', 'Exiger la virtualisation du bloc principal'),
-    toggle('require_bound_strings', 'Exiger toutes les chaînes liées', 'Nécessite l’intégrité, la liaison et la virtualisation du bloc principal.'),
+  { title: 'Virtual machine', fields: [
+    toggle('virtualize', 'Enable virtualization'),
+    toggle('virtualize_chunk', 'Virtualize the main chunk'),
+    select('vm_hardening', 'VM diversification', [['basic', 'Basic'], ['client-max', 'Client max'], ['max', 'Max']]),
+    toggle('vm_scatter_data', 'Scatter VM tables', 'Increases output size and load cost.'),
+    toggle('vm_bind_strings', 'Bind strings to prototypes'),
+    toggle('vm_pack_bytecode', 'Pack bytecode'),
+    toggle('vm_pack_constants', 'Pack constants'),
+    toggle('vm_predecode_bytecode', 'Cache decoded instructions', 'Faster execution with a retained plaintext instruction cache.'),
+    toggle('require_function_vm', 'Reject native function fallbacks'),
+    toggle('require_chunk_vm', 'Require main-chunk virtualization'),
+    toggle('require_bound_strings', 'Require all strings to be bound', 'Requires integrity checks, string binding and main-chunk virtualization.'),
   ] },
-  { title: 'Chaînes et identifiants', fields: [
-    select('string_decode_mode', 'Décodage des chaînes', [['lazy', 'À la demande'], ['eager', 'Au chargement']]),
-    toggle('cache_strings', 'Conserver les chaînes décodées', 'Accélère les accès répétés en conservant les valeurs en clair.'),
-    number('name_min_length', 'Longueur minimale des noms', 1, 128),
-    number('name_max_length', 'Longueur maximale des noms', 1, 128),
+  { title: 'Strings and identifiers', fields: [
+    select('string_decode_mode', 'String decoding', [['lazy', 'On demand'], ['eager', 'At startup']]),
+    toggle('cache_strings', 'Cache decoded strings', 'Speeds up repeated access by keeping plaintext values.'),
+    number('name_min_length', 'Minimum name length', 1, 128),
+    number('name_max_length', 'Maximum name length', 1, 128),
   ] },
-  { title: 'Flux de contrôle et nombres', fields: [
-    number('min_blocks_for_cff', 'Seuil d’aplatissement', 2, 128),
-    select('dead_code_density', 'Densité des leurres', [['low', 'Faible'], ['medium', 'Moyenne'], ['high', 'Élevée']]),
-    number('fake_function_count', 'Nombre de fonctions leurres', 0, 64),
-    number('mba_depth', 'Profondeur des expressions numériques', 1, 3),
-    toggle('skip_trivial_numbers', 'Conserver les nombres 0 et 1'),
-    toggle('opaque_predicates', 'Ajouter des prédicats arithmétiques', 'Option historique : bruit facilement simplifiable, désactivé dans les profils.'),
+  { title: 'Control flow and numbers', fields: [
+    number('min_blocks_for_cff', 'Flattening threshold', 2, 128),
+    select('dead_code_density', 'Decoy density', [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]),
+    number('fake_function_count', 'Decoy function count', 0, 64),
+    number('mba_depth', 'Numeric expression depth', 1, 3),
+    toggle('skip_trivial_numbers', 'Keep the numbers 0 and 1'),
+    toggle('opaque_predicates', 'Add arithmetic predicates', 'Legacy option: easily simplified noise, disabled by presets.'),
   ] },
-  { title: 'Sortie', fields: [
-    toggle('strip_types', 'Retirer les annotations de types'),
-    toggle('strip_comments', 'Retirer les commentaires'),
-    toggle('wrap_in_iife', 'Envelopper dans une fonction', 'Ajoute une frame d’appel et nécessite le retrait des types.'),
-    { key: 'build_id', label: 'Identifiant de build', type: 'text', help: 'Vide : identifiant automatique. Visible dans l’en-tête du résultat.' },
+  { title: 'Output', fields: [
+    toggle('strip_types', 'Strip type annotations'),
+    toggle('strip_comments', 'Strip comments'),
+    toggle('wrap_in_iife', 'Wrap in a function', 'Adds a call frame and requires type stripping.'),
+    { key: 'build_id', label: 'Build identifier', type: 'text', help: 'Empty: automatic identifier. Visible in the output header.' },
   ] },
 ];
 export const fields = groups.flatMap(group => group.fields);
 export const descriptions = {
-  rename: 'Renommage des variables locales et minification, sans encodage des chaînes.',
-  lightweight: 'Renommage et encodage des chaînes, avec un faible surcoût.',
-  native: 'Chaînes fragmentées, entiers transformés et flux de contrôle aplati.',
-  vm: 'Compilation en bytecode privé et diversification. Surcoût de taille et d’exécution plus élevé.',
-  hardened: 'VM maximale, chaînes liées et couverture stricte. Les constructions non couvertes sont refusées.',
+  rename: 'Local renaming and minification without string encoding.',
+  lightweight: 'Local renaming and string encoding with low overhead.',
+  native: 'Split strings, transformed integers and flattened control flow.',
+  vm: 'Private bytecode compilation and diversification. Higher size and runtime overhead.',
+  hardened: 'Maximum VM settings, bound strings and strict coverage. Unsupported constructs are rejected.',
 };
 export function defaults(preset) {
   const native = ['native', 'vm', 'hardened'].includes(preset);
@@ -113,7 +113,7 @@ export function settings(preset, seed, pretty) {
   const result = { preset, seed, minify: !pretty };
   for (const field of fields) {
     const input = document.getElementById(`option-${field.key}`);
-    if (!input.reportValidity()) throw new Error(`Réglage invalide : ${field.label}`);
+    if (!input.reportValidity()) throw new Error(`Invalid setting : ${field.label}`);
     const value = field.type === 'checkbox' ? input.checked : field.type === 'number' ? input.valueAsNumber : input.value;
     if (field.key !== 'build_id' || value.trim()) result[field.key] = value;
   }

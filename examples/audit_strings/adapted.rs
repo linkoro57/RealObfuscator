@@ -529,7 +529,7 @@ mod tests {
             local function f()
                 return '', '\000\255\128', 'short',
                     'a long binary-safe string that must be reconstructed from multiple encoded fragments',
-                    'Unicode 日本語 😀 et caractères accentués dans une longue chaîne'
+                    'Unicode 日本語 😀 inside a sufficiently long byte-preserving string'
             end
             local receiver={}
             function receiver:send(s)return s end

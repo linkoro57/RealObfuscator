@@ -6,7 +6,8 @@ import AxeBuilder from '@axe-core/playwright';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Obfusquer', exact: true })).toBeEnabled({ timeout: 45000 });
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByRole('button', { name: 'Obfuscate', exact: true })).toBeEnabled({ timeout: 45000 });
 });
 
 test('real WASM engine, exact seed, stats and download across every preset', async ({ page }) => {
@@ -19,7 +20,7 @@ test('real WASM engine, exact seed, stats and download across every preset', asy
   for (const preset of ['rename', 'lightweight', 'native', 'vm', 'hardened']) {
     await page.locator('#preset').selectOption(preset);
     await page.locator('#obfuscate').click();
-    await expect(page.locator('#run-state')).toHaveText('Terminé');
+    await expect(page.locator('#run-state')).toHaveText('Done');
     await expect(page.locator('#output')).not.toHaveValue('');
     await expect(page.locator('#error')).toBeHidden();
     const result = await page.locator('#output').inputValue();
@@ -33,7 +34,7 @@ test('real WASM engine, exact seed, stats and download across every preset', asy
       vmOutput = result;
       await expect(page.locator('#stats')).toContainText('vm_chunks');
       await page.locator('#obfuscate').click();
-      await expect(page.locator('#run-state')).toHaveText('Terminé');
+      await expect(page.locator('#run-state')).toHaveText('Done');
       await expect(page.locator('#output')).toHaveValue(vmOutput);
     }
   }
@@ -60,7 +61,7 @@ test('real WASM engine, exact seed, stats and download across every preset', asy
 });
 
 test('syntax errors, invalid combinations and stale result handling', async ({ page }) => {
-  await page.locator('#obfuscate').click(); await expect(page.locator('#run-state')).toHaveText('Terminé');
+  await page.locator('#obfuscate').click(); await expect(page.locator('#run-state')).toHaveText('Done');
   await page.locator('#source').fill('local = broken');
   await expect(page.locator('#download')).toBeDisabled();
   await page.locator('#obfuscate').click();
@@ -77,15 +78,15 @@ test('syntax errors, invalid combinations and stale result handling', async ({ p
   await page.locator('#reset-options').click();
   await page.keyboard.press('Escape');
   await expect(page.locator('#open-options')).toBeFocused();
-  await page.locator('#obfuscate').click(); await expect(page.locator('#run-state')).toHaveText('Terminé');
+  await page.locator('#obfuscate').click(); await expect(page.locator('#run-state')).toHaveText('Done');
   await page.locator('#source').fill(''); await page.locator('#obfuscate').click();
-  await expect(page.locator('#error')).toContainText('Collez du code');
+  await expect(page.locator('#error')).toContainText('Paste code');
 });
 
 test('local upload, safe filename, responsive layout and keyboard dialog', async ({ page }) => {
   await page.locator('#file-input').setInputFiles({ name: 'module.lua', mimeType: 'text/plain', buffer: Buffer.from("return 'local file'") });
   await expect(page.locator('#filename')).toHaveText('module.lua');
-  await page.locator('#obfuscate').click(); await expect(page.locator('#run-state')).toHaveText('Terminé');
+  await page.locator('#obfuscate').click(); await expect(page.locator('#run-state')).toHaveText('Done');
   const pending = page.waitForEvent('download'); await page.locator('#download').click();
   expect((await pending).suggestedFilename()).toBe('module.obf.luau');
   for (const width of [320, 768, 1024, 1440]) {
@@ -102,18 +103,18 @@ test('cancel interrupts a real job and the next job works', async ({ page }) => 
   await page.locator('#preset').selectOption('hardened');
   await page.locator('#source').fill(Array.from({ length: 500 }, (_, i) => `print('entry ${i} with a long string for a cancellable build')`).join('\n'));
   await page.locator('#obfuscate').click(); await page.locator('#cancel').click();
-  await expect(page.locator('#notice')).toContainText('annulé');
+  await expect(page.locator('#notice')).toContainText('cancelled');
   await expect(page.locator('#download')).toBeDisabled();
   await expect(page.locator('#obfuscate')).toBeEnabled();
   await page.locator('#source').fill('return 42'); await page.locator('#obfuscate').click();
-  await expect(page.locator('#run-state')).toHaveText('Terminé');
+  await expect(page.locator('#run-state')).toHaveText('Done');
 });
 
 test('native fallbacks are visible and strict coverage rejects them', async ({ page }) => {
   await page.locator('#source').fill('local function f()return getfenv()end;print(f())');
   await page.locator('#preset').selectOption('vm');
   await page.locator('#obfuscate').click();
-  await expect(page.locator('#run-state')).toHaveText('Terminé');
+  await expect(page.locator('#run-state')).toHaveText('Done');
   await expect(page.locator('#warnings')).toBeVisible();
   await expect(page.locator('#warnings')).toContainText('native');
   await page.locator('#preset').selectOption('hardened');
@@ -128,4 +129,15 @@ test('editor and settings have no automated WCAG AA violations', async ({ page }
   await page.locator('#open-options').click();
   audit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   expect(audit.violations).toEqual([]);
+});
+
+test('pretty output scrolls inside the editor instead of expanding the page', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator('#preset').selectOption('hardened');
+  await page.locator('#pretty').check();
+  await page.locator('#obfuscate').click();
+  await expect(page.locator('#run-state')).toHaveText('Done');
+  const bounds = await page.locator('#output-frame').boundingBox();
+  expect(bounds.height).toBeLessThan(900);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(1200);
 });

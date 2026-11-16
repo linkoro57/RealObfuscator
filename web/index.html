@@ -1,57 +1,57 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Obfusquez vos scripts Lua et Luau dans votre navigateur avec RealObfuscator. Réglages complets, traitement local et téléchargement du résultat.">
+  <meta name="description" content="Obfuscate Lua and Luau scripts locally in your browser with RealObfuscator. Full settings, local processing and downloadable output.">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="color-scheme" content="light">
-  <title>RealObfuscator — Atelier Luau</title>
+  <title>RealObfuscator — Luau Playground</title>
   <link rel="icon" type="image/svg+xml" href="./icon.svg">
   <link rel="stylesheet" href="./styles.css">
   <script type="module" src="./app.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#source">Aller au code source</a>
+  <a class="skip-link" href="#source">Skip to source code</a>
   <header class="header">
-    <div class="brand"><img src="./icon.svg" alt="" width="38" height="38"><div><h1>RealObfuscator <span>Playground</span></h1><p>Votre code. Vos réglages. Dans votre navigateur.</p></div></div>
-    <nav aria-label="Liens et actions"><a class="button quiet" href="https://github.com/linkoro57/RealObfuscator" target="_blank" rel="noreferrer">GitHub ↗</a><a class="button quiet docs-link" href="https://github.com/linkoro57/RealObfuscator#readme" target="_blank" rel="noreferrer">Documentation ↗</a><button id="obfuscate" class="button primary" type="submit" form="configuration" disabled><span aria-hidden="true">▷</span> Obfusquer</button><button id="cancel" class="button danger" hidden>Annuler</button></nav>
+    <div class="brand"><img src="./icon.svg" alt="" width="38" height="38"><div><h1>RealObfuscator <span>Playground</span></h1><p>Your code. Your settings. In your browser.</p></div></div>
+    <nav aria-label="Links and actions"><a class="button quiet" href="https://github.com/linkoro57/RealObfuscator" target="_blank" rel="noreferrer">GitHub ↗</a><a class="button quiet docs-link" href="https://github.com/linkoro57/RealObfuscator#readme" target="_blank" rel="noreferrer">Documentation ↗</a><button id="obfuscate" class="button primary" type="submit" form="configuration" disabled><span aria-hidden="true">▷</span> Obfuscate</button><button id="cancel" class="button danger" hidden>Cancel</button></nav>
   </header>
   <main>
     <form id="configuration" class="toolbar">
-      <div class="field preset-field"><label for="preset">Profil</label><select id="preset"><option value="lightweight">Léger</option><option value="rename">Renommage</option><option value="native">Natif</option><option value="vm">Machine virtuelle</option><option value="hardened">Hardened</option></select></div>
-      <div class="field runtime-field"><label for="runtime">Cible</label><input id="runtime" value="Luau / Roblox" readonly></div>
-      <div class="field seed-field"><label for="seed">Seed <span class="muted">facultative</span></label><div class="input-group"><input id="seed" inputmode="numeric" pattern="[0-9]*" placeholder="Aléatoire" autocomplete="off" aria-describedby="seed-help"><button id="random-seed" class="button icon-button" type="button" aria-label="Générer une seed">↻</button></div></div>
-      <label class="format-control"><input id="pretty" type="checkbox"><span>Sortie formatée</span></label>
-      <button id="open-options" class="button" type="button"><span aria-hidden="true">⚙</span> Réglages avancés <span id="option-count" class="count" hidden></span></button>
-      <span class="local-note"><span class="status-dot" aria-hidden="true"></span> Traitement local</span>
-      <p id="seed-help" class="sr-only">Une seed reproduit le résultat. Laissez ce champ vide pour un nouveau résultat à chaque traitement.</p>
+      <div class="field preset-field"><label for="preset">Preset</label><select id="preset"><option value="lightweight">Lightweight</option><option value="rename">Rename</option><option value="native">Native</option><option value="vm">Virtual machine</option><option value="hardened">Hardened</option></select></div>
+      <div class="field runtime-field"><label for="runtime">Target</label><input id="runtime" value="Luau / Roblox" readonly></div>
+      <div class="field seed-field"><label for="seed">Seed <span class="muted">optional</span></label><div class="input-group"><input id="seed" inputmode="numeric" pattern="[0-9]*" placeholder="Random" autocomplete="off" aria-describedby="seed-help"><button id="random-seed" class="button icon-button" type="button" aria-label="Generate a seed">↻</button></div></div>
+      <label class="format-control"><input id="pretty" type="checkbox"><span>Pretty output</span></label>
+      <button id="open-options" class="button" type="button"><span aria-hidden="true">⚙</span> Advanced settings <span id="option-count" class="count" hidden></span></button>
+      <span class="local-note"><span class="status-dot" aria-hidden="true"></span> Local processing</span>
+      <p id="seed-help" class="sr-only">A seed makes the output reproducible. Leave it empty for a new result each time.</p>
     </form>
-    <div class="context-bar"><p id="preset-description">Renommage et encodage des chaînes, avec un faible surcoût.</p><span id="engine-status" role="status" aria-live="polite">Chargement du moteur…</span></div>
+    <div class="context-bar"><p id="preset-description">Local renaming and string encoding with low overhead.</p><span id="engine-status" role="status" aria-live="polite">Loading engine…</span></div>
     <div class="workspace">
       <section class="editor-panel" aria-labelledby="source-heading">
-        <div class="panel-heading"><h2 id="source-heading">Code source <span class="file-tag">Luau</span></h2><div class="panel-actions"><button id="load-file" class="text-button">Charger un fichier</button><button id="example" class="text-button">Exemple</button><button id="clear" class="text-button">Effacer</button></div></div>
-        <div class="editor-frame"><pre id="source-lines" class="line-numbers" aria-hidden="true">1</pre><textarea id="source" aria-label="Code source Lua ou Luau" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" placeholder="Collez votre code ici, ou chargez un fichier .lua / .luau…"></textarea></div>
-        <div class="editor-footer"><span id="filename">script.luau</span><span id="source-size">0 octet</span></div>
+        <div class="panel-heading"><h2 id="source-heading">Source code <span class="file-tag">Luau</span></h2><div class="panel-actions"><button id="load-file" class="text-button">Load file</button><button id="example" class="text-button">Example</button><button id="clear" class="text-button">Clear</button></div></div>
+        <div class="editor-frame"><pre id="source-lines" class="line-numbers" aria-hidden="true">1</pre><textarea id="source" aria-label="Lua or Luau source code" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" placeholder="Paste your code here, or load a .lua / .luau file…"></textarea></div>
+        <div class="editor-footer"><span id="filename">script.luau</span><span id="source-size">0 bytes</span></div>
         <input id="file-input" type="file" accept=".lua,.luau,text/plain" hidden>
       </section>
       <section class="editor-panel" aria-labelledby="output-heading">
-        <div class="panel-heading"><h2 id="output-heading">Source obfusquée</h2><div class="panel-actions"><button id="copy" class="text-button" disabled>Copier</button><button id="download" class="button small" disabled>↓ Télécharger</button></div></div>
-        <div id="output-frame" class="editor-frame"><pre id="output-lines" class="line-numbers" aria-hidden="true">1</pre><textarea id="output" aria-label="Code obfusqué" readonly spellcheck="false" wrap="off" placeholder="Le résultat apparaîtra ici après obfuscation."></textarea><div id="working" class="working" hidden><span class="spinner" aria-hidden="true"></span><strong>Obfuscation en cours</strong><span>Vous pouvez annuler à tout moment.</span></div></div>
-        <div class="editor-footer"><span id="output-label">Aucun résultat</span><span id="output-size">—</span></div>
+        <div class="panel-heading"><h2 id="output-heading">Obfuscated output</h2><div class="panel-actions"><button id="copy" class="text-button" disabled>Copy</button><button id="download" class="button small" disabled>↓ Download</button></div></div>
+        <div id="output-frame" class="editor-frame"><pre id="output-lines" class="line-numbers" aria-hidden="true">1</pre><textarea id="output" aria-label="Obfuscated code" readonly spellcheck="false" wrap="off" placeholder="Your obfuscated source will appear here."></textarea><div id="working" class="working" hidden><span class="spinner" aria-hidden="true"></span><strong>Obfuscating</strong><span>You can cancel at any time.</span></div></div>
+        <div class="editor-footer"><span id="output-label">No output yet</span><span id="output-size">—</span></div>
       </section>
       <aside class="report-panel" aria-labelledby="report-heading">
-        <div class="panel-heading"><h2 id="report-heading">Rapport</h2><span id="run-state" class="state-label">En attente</span></div>
-        <div class="report-content"><div id="notice" class="notice" role="status" aria-live="polite">Chargez ou collez un script pour commencer.</div><div id="error" class="error" role="alert" hidden></div><div id="warnings" class="warnings" hidden></div><dl id="summary" class="summary" hidden></dl><details id="stats-details" hidden><summary>Toutes les statistiques</summary><dl id="stats" class="stats"></dl></details><button id="download-report" class="text-button report-download" hidden>Télécharger le rapport JSON</button><div class="privacy"><h3>Le code reste ici</h3><p>Le traitement utilise le moteur Rust dans votre navigateur. Aucun code n’est envoyé à un serveur et aucun script n’est exécuté.</p><p>L’obfuscation ralentit l’analyse ; elle ne rend pas les secrets d’un client confidentiels.</p></div></div>
+        <div class="panel-heading"><h2 id="report-heading">Report</h2><span id="run-state" class="state-label">Idle</span></div>
+        <div class="report-content"><div id="notice" class="notice" role="status" aria-live="polite">Load or paste a script to get started.</div><div id="error" class="error" role="alert" hidden></div><div id="warnings" class="warnings" hidden></div><dl id="summary" class="summary" hidden></dl><details id="stats-details" hidden><summary>All statistics</summary><dl id="stats" class="stats"></dl></details><button id="download-report" class="text-button report-download" hidden>Download JSON report</button><div class="privacy"><h3>Your code stays here</h3><p>The Rust engine runs in your browser. No source is sent to a server and no scripts are executed.</p><p>Obfuscation increases analysis effort; it does not keep client-side secrets confidential.</p></div></div>
       </aside>
     </div>
-    <footer class="page-footer"><span>RealObfuscator · Rust + WebAssembly</span><span>Fichiers .lua et .luau · Cible Luau · 1 Mio maximum</span><a href="./LICENSE">GPL-3.0-only</a></footer>
+    <footer class="page-footer"><span>RealObfuscator · Rust + WebAssembly</span><span>.lua and .luau files · Luau runtime · 1 MiB maximum</span><a href="./LICENSE">GPL-3.0-only</a></footer>
   </main>
   <dialog id="options-dialog" aria-labelledby="options-heading">
-    <form method="dialog" class="dialog-header"><div><h2 id="options-heading">Réglages avancés</h2><p>Les réglages sont appliqués au profil sélectionné.</p></div><button class="button icon-button" aria-label="Fermer les réglages">✕</button></form>
-    <div class="dialog-body"><p class="options-help">Changer de profil réinitialise les réglages. Les combinaisons incompatibles sont expliquées avant la génération du résultat.</p><div id="options-fields"></div></div>
-    <div class="dialog-footer"><button id="reset-options" class="button">Réinitialiser au profil</button><button id="close-options" class="button primary">Terminé</button></div>
+    <form method="dialog" class="dialog-header"><div><h2 id="options-heading">Advanced settings</h2><p>Settings override the selected preset.</p></div><button class="button icon-button" aria-label="Close settings">✕</button></form>
+    <div class="dialog-body"><p class="options-help">Changing presets resets these settings. Incompatible combinations return an error before output is generated.</p><div id="options-fields"></div></div>
+    <div class="dialog-footer"><button id="reset-options" class="button">Reset to preset</button><button id="close-options" class="button primary">Done</button></div>
   </dialog>
-  <noscript><p class="error">JavaScript et WebAssembly sont nécessaires pour utiliser cet atelier.</p></noscript>
+  <noscript><p class="error">JavaScript and WebAssembly are required to use this playground.</p></noscript>
 </body>
 </html>
