@@ -16,7 +16,7 @@ The following are independent implementations of general techniques, not claims 
 
 | Family | RealObfuscator 2.2 implementation | Scope / limit |
 | --- | --- | --- |
-| Custom instruction virtualization | AST compiler and register interpreter in `src/function_vm.rs` | Supported main chunks and function bodies; uncompiled chunks retain conservative statement dispatch. |
+| Custom instruction virtualization | AST compiler and register interpreter in `src/function_vm/` | Supported main chunks and function bodies; uncompiled chunks retain conservative statement dispatch. |
 | Arithmetic / comparisons / branching | Register instructions, conditional jumps, short-circuit operations, numeric loops | Preserves native operators, including metamethod behavior; explicit stack/environment introspection needs native fallback. |
 | Closures and upvalues | Mutable binding cells and closure factories that capture cell references | Factories return native callable closures with compiled bodies where supported. A new loop iteration creates new cells. |
 | Variable argument and result counts | Explicit counted packs and multivalue instructions | Nil holes and zero-result calls are tested; parentheses and casts retain single-result semantics. |

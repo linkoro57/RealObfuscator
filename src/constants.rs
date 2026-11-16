@@ -1,4 +1,9 @@
-use crate::{config::ObfuscationConfig, names::Names, obfuscator::ObfuscationReport, syntax};
+use crate::{
+    config::{ObfuscationConfig, StringDecodeMode},
+    names::Names,
+    obfuscator::ObfuscationReport,
+    syntax,
+};
 use darklua_core::{
     nodes::*,
     process::{NodePostProcessor, NodeProcessor},
@@ -64,6 +69,7 @@ struct Constant {
 /// conceals literals and diversifies builds, rather than providing cryptographic secrecy.
 pub(crate) struct Constants<'a> {
     config: &'a ObfuscationConfig,
+    decode_mode: StringDecodeMode,
     names: &'a mut Names,
     report: &'a mut ObfuscationReport,
     decoder: String,
@@ -80,11 +86,13 @@ pub(crate) struct Constants<'a> {
 impl<'a> Constants<'a> {
     pub fn new(
         config: &'a ObfuscationConfig,
+        decode_mode: StringDecodeMode,
         names: &'a mut Names,
         report: &'a mut ObfuscationReport,
     ) -> Self {
         Self {
             config,
+            decode_mode,
             decoder: names.fresh(),
             format: names.fresh(),
             xor: names.fresh(),
@@ -190,28 +198,43 @@ impl<'a> Constants<'a> {
         let shr = self.names.fresh();
         let band = self.names.fresh();
         let fail = self.names.fresh();
-        source.push_str(&format!("local {byte},{char_fn},{concat},{bxor},{fail},{shl},{shr},{band}=string.byte,string.char,table.concat,bit32.bxor,error,bit32.lshift,bit32.rshift,bit32.band;local {pool}={{"));
+        source.push_str(&format!("local {byte},{char_fn},{concat},{bxor},{fail},{shl},{shr},{band}=string.byte,string.char,table.concat,bit32.bxor,error,bit32.lshift,bit32.rshift,bit32.band;"));
+        let mut prefix = syntax::generated(&source);
+        // Keep binary payloads as data throughout the pipeline. Formatting a large
+        // escaped string only to parse it back into bytes adds avoidable work.
         let packed = !self.config.virtualize || self.config.vm_pack_constants;
-        for constant in &self.pool {
-            let payload = if packed {
-                syntax::byte_literal(&constant.bytes)
-            } else {
-                format!(
-                    "{{{}}}",
-                    constant
-                        .bytes
-                        .iter()
-                        .map(u8::to_string)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )
-            };
-            source.push_str(&format!(
-                "[{}]={{{payload},{},{},{},{}}},",
-                constant.id, constant.seed, constant.multiplier, constant.step, constant.checksum
-            ));
-        }
-        source.push_str(&format!("}};local {cache}={{}};local function {}(id){}local entry={pool}[id];if entry==nil then {fail}()end;local data=entry[1];local state={bxor}(entry[2],entry[4]);local out={{}};local hash=0;for i=1,#data do local c={};state={bxor}(state,{shl}(state,13));state={bxor}(state,{shr}(state,17));state={bxor}(state,{shl}(state,5));local v={bxor}(c,{band}(state,255));out[i]={char_fn}(v);state=(state+entry[3]+c+i)%4294967296;{}end;{}local result={concat}(out);{}return result end;",
+        let entries = self
+            .pool
+            .iter()
+            .map(|constant| {
+                let payload: Expression = if packed {
+                    StringExpression::from_value(constant.bytes.clone()).into()
+                } else {
+                    TableExpression::new(
+                        constant
+                            .bytes
+                            .iter()
+                            .map(|byte| TableEntry::from_value(*byte as f64))
+                            .collect(),
+                    )
+                    .into()
+                };
+                let entry = TableExpression::new(vec![
+                    TableEntry::from_value(payload),
+                    TableEntry::from_value(constant.seed as f64),
+                    TableEntry::from_value(constant.multiplier as f64),
+                    TableEntry::from_value(constant.step as f64),
+                    TableEntry::from_value(constant.checksum as f64),
+                ]);
+                TableIndexEntry::new(constant.id as f64, entry).into()
+            })
+            .collect();
+        prefix.push_statement(
+            VariableAssignment::from_variable(pool.as_str())
+                .with_value(TableExpression::new(entries)),
+        );
+        source.clear();
+        source.push_str(&format!("local {cache}={{}};local function {}(id){}local entry={pool}[id];if entry==nil then {fail}()end;local data=entry[1];local state={bxor}(entry[2],entry[4]);local out={{}};local hash=0;for i=1,#data do local c={};state={bxor}(state,{shl}(state,13));state={bxor}(state,{shr}(state,17));state={bxor}(state,{shl}(state,5));local v={bxor}(c,{band}(state,255));out[i]={char_fn}(v);state=(state+entry[3]+c+i)%4294967296;{}end;{}local result={concat}(out);{}return result end;",
             self.decoder,
             if self.config.cache_strings { format!("local cached={cache}[id];if cached~=nil then return cached end;") } else { String::new() },
             if packed { format!("{byte}(data,i)") } else { "data[i]".into() },
@@ -222,10 +245,13 @@ impl<'a> Constants<'a> {
         if self.config.anti_tamper {
             self.report.integrity_checks += self.pool.len();
         }
-        if self.config.string_decode_mode == "eager" {
+        if self.decode_mode == StringDecodeMode::Eager {
             source.push_str(&format!("for id in {pool} do {}(id)end;", self.decoder));
         }
-        syntax::generated(&source)
+        for statement in syntax::generated(&source).take_statements() {
+            prefix.push_statement(statement);
+        }
+        prefix
     }
 }
 

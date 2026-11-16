@@ -1,63 +1,17 @@
-//! Compile supported function bodies to a private register instruction set.
-//! Compilation is transactional: unsupported constructs retain their native body.
-use crate::{
-    config::ObfuscationConfig,
-    names::{Names, Renamer},
-    obfuscator::ObfuscationReport,
-    syntax,
+//! Lower Luau AST nodes into logical register instructions.
+use super::{
+    bridge::{Bridge, Capture},
+    instruction::{Instruction, Op},
 };
+use crate::syntax;
 use darklua_core::{
     nodes::*,
-    process::{DefaultVisitor, NodePostProcessor, NodeProcessor, NodeVisitor, Scope, ScopeVisitor},
+    process::{DefaultVisitor, NodeVisitor, ScopeVisitor},
     rules::{ContextBuilder, ConvertFunctionToAssign, FlawlessRule},
     Resources,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Op {
-    Constant,
-    Move,
-    Read,
-    Write,
-    Index,
-    SetIndex,
-    Table,
-    TableExtend,
-    List,
-    Push,
-    Extend,
-    Item,
-    Call,
-    CallMany,
-    Vararg,
-    VarargMany,
-    Return,
-    Jump,
-    JumpFalse,
-    JumpTrue,
-    Binary(&'static str),
-    BinaryConstant(&'static str),
-    Unary(&'static str),
-    ForCheck,
-    ForNext,
-    Format,
-    Native,
-    GenericFor,
-    Signal,
-    Bind,
-    CellGet,
-    CellSet,
-    Closure,
-}
-
-#[derive(Clone)]
-struct Instruction {
-    op: Op,
-    a: u32,
-    b: u32,
-    c: u32,
-}
 #[derive(Default)]
 struct Loop {
     breaks: Vec<usize>,
@@ -69,9 +23,27 @@ enum Location {
     Index(u32, u32),
 }
 
+/// A complete candidate, published only after its entire body compiles.
+/// Registers are one-based; branch targets remain zero-based logical offsets.
+/// The final empty return makes every fallthrough target valid before relocation.
+pub(super) struct Program {
+    pub code: Vec<Instruction>,
+    pub constants: Vec<Expression>,
+    pub external: Vec<String>,
+    pub statements: usize,
+    pub fused: usize,
+    pub native_bridges: usize,
+    pub iteration_bridges: usize,
+    pub closure_bridges: usize,
+}
+
 struct Compiler {
     code: Vec<Instruction>,
     constants: Vec<Expression>,
+    number_ids: HashMap<u64, u32>,
+    string_ids: HashMap<Vec<u8>, u32>,
+    nil_id: Option<u32>,
+    boolean_ids: [Option<u32>; 2],
     external: Vec<String>,
     external_ids: HashMap<String, u32>,
     scopes: Vec<HashMap<String, u32>>,
@@ -88,11 +60,52 @@ struct Compiler {
 
 type CompileResult<T> = Result<T, &'static str>;
 
+/// Compile without touching the input AST; errors discard all candidate state.
+pub(super) fn compile(
+    block: &Block,
+    parameters: &[String],
+    bridge_parameter: String,
+    callback_parameter: String,
+) -> CompileResult<Program> {
+    let mut compiler = Compiler::new(parameters, bridge_parameter, callback_parameter);
+    compiler.block(block, true)?;
+    let empty = compiler.empty_list();
+    compiler.emit(Op::Return, empty, 0, 0);
+    // Cells are needed only when a bridge can retain or access the register map.
+    // Pure VM bodies keep bindings directly in registers: the same instruction
+    // positions and branch targets, without per-binding table allocations.
+    if !compiler
+        .code
+        .iter()
+        .any(|instruction| matches!(instruction.op, Op::Closure | Op::Native | Op::GenericFor))
+    {
+        for instruction in &mut compiler.code {
+            if matches!(instruction.op, Op::Bind | Op::CellGet | Op::CellSet) {
+                instruction.op = Op::Move;
+            }
+        }
+    }
+    Ok(Program {
+        code: compiler.code,
+        constants: compiler.constants,
+        external: compiler.external,
+        statements: compiler.statements,
+        fused: compiler.fused,
+        native_bridges: compiler.native_bridges,
+        iteration_bridges: compiler.iteration_bridges,
+        closure_bridges: compiler.closure_bridges,
+    })
+}
+
 impl Compiler {
     fn new(parameters: &[String], bridge_parameter: String, callback_parameter: String) -> Self {
         let mut compiler = Self {
             code: Vec::new(),
             constants: Vec::new(),
+            number_ids: HashMap::new(),
+            string_ids: HashMap::new(),
+            nil_id: None,
+            boolean_ids: [None; 2],
             external: Vec::new(),
             external_ids: HashMap::new(),
             scopes: vec![HashMap::new()],
@@ -147,15 +160,42 @@ impl Compiler {
         self.emit(Op::Jump, 0, 0, 0)
     }
     fn constant_id(&mut self, value: Expression) -> u32 {
-        if let Some(index) = self
-            .constants
-            .iter()
-            .position(|existing| *existing == value)
-        {
-            return index as u32 + 1;
+        // Index literals by their exact runtime value. Number bits retain the
+        // distinction between signed zeroes; strings are keyed by decoded bytes.
+        // Only generated capture-list tables need structural AST comparison.
+        let existing = match &value {
+            Expression::Number(number) => self
+                .number_ids
+                .get(&number.compute_value().to_bits())
+                .copied(),
+            Expression::String(string) => self.string_ids.get(string.get_value()).copied(),
+            Expression::Nil(_) => self.nil_id,
+            Expression::False(_) => self.boolean_ids[0],
+            Expression::True(_) => self.boolean_ids[1],
+            _ => self
+                .constants
+                .iter()
+                .position(|existing| *existing == value)
+                .map(|index| index as u32 + 1),
+        };
+        if let Some(id) = existing {
+            return id;
+        }
+        let id = self.constants.len() as u32 + 1;
+        match &value {
+            Expression::Number(number) => {
+                self.number_ids.insert(number.compute_value().to_bits(), id);
+            }
+            Expression::String(string) => {
+                self.string_ids.insert(string.get_value().to_vec(), id);
+            }
+            Expression::Nil(_) => self.nil_id = Some(id),
+            Expression::False(_) => self.boolean_ids[0] = Some(id),
+            Expression::True(_) => self.boolean_ids[1] = Some(id),
+            _ => {}
         }
         self.constants.push(value);
-        self.constants.len() as u32
+        id
     }
     fn constant(&mut self, value: Expression) -> u32 {
         let id = self.constant_id(value);
@@ -382,9 +422,14 @@ impl Compiler {
             _ => unreachable!(),
         }
     }
-    fn values(&mut self, values: &[Expression]) -> CompileResult<u32> {
+    fn empty_list(&mut self) -> u32 {
         let list = self.reg();
         self.emit(Op::List, list, 0, 0);
+        list
+    }
+
+    fn values(&mut self, values: &[Expression]) -> CompileResult<u32> {
+        let list = self.empty_list();
         for (i, value) in values.iter().enumerate() {
             if i + 1 == values.len() && Self::expands(value) {
                 let value = self.many(value)?;
@@ -460,17 +505,7 @@ impl Compiler {
             Arguments::String(string) => vec![string.clone().into()],
             Arguments::Table(table) => vec![table.clone().into()],
         };
-        let arguments = self.reg();
-        self.emit(Op::List, arguments, 0, 0);
-        for (i, value) in values.iter().enumerate() {
-            if i + 1 == values.len() && Self::expands(value) {
-                let value = self.many(value)?;
-                self.emit(Op::Extend, arguments, value, 0);
-            } else {
-                let value = self.expr(value)?;
-                self.emit(Op::Push, arguments, value, 0);
-            }
-        }
+        let arguments = self.values(&values)?;
         let result = self.reg();
         self.emit(
             if many { Op::CallMany } else { Op::Call },
@@ -819,533 +854,55 @@ impl Compiler {
     }
 }
 
-pub(crate) struct FunctionVm<'a> {
-    config: &'a ObfuscationConfig,
-    names: &'a mut Names,
-    report: &'a mut ObfuscationReport,
-    runner: String,
-    bank: String,
-    programs: Vec<(u32, Compiler)>,
-    schema: Vec<usize>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl<'a> FunctionVm<'a> {
-    pub fn runner(&self) -> &str {
-        &self.runner
-    }
-    pub fn new(
-        config: &'a ObfuscationConfig,
-        names: &'a mut Names,
-        report: &'a mut ObfuscationReport,
-    ) -> Self {
-        let runner = names.fresh();
-        let bank = names.fresh();
-        let mut schema: Vec<_> = (1..=12).collect();
-        names.rng.shuffle(&mut schema);
-        Self {
-            config,
-            names,
-            report,
-            runner,
-            bank,
-            programs: Vec::new(),
-            schema,
-        }
-    }
-    fn compile(&mut self, block: &mut Block, parameters: Vec<String>, variadic: bool) {
-        self.compile_target(block, parameters, variadic, false);
-    }
-    pub fn compile_chunk(&mut self, block: &mut Block) {
-        if !self.config.virtualize_chunk {
-            return;
-        }
-        if self
-            .report
-            .vm_fallback_reasons
-            .contains_key("environment or stack introspection")
-        {
-            self.report.vm_chunk_fallback =
-                Some("source contains native stack/environment introspection".into());
-            return;
-        }
-        self.compile_target(block, Vec::new(), true, true);
-    }
-    fn compile_target(
-        &mut self,
-        block: &mut Block,
-        parameters: Vec<String>,
-        variadic: bool,
-        chunk: bool,
-    ) {
-        let mut compiler = Compiler::new(&parameters, self.names.fresh(), self.names.fresh());
-        if let Err(reason) = compiler.block(block, true) {
-            if chunk {
-                self.report.vm_chunk_fallback = Some(reason.to_owned());
-                return;
-            }
-            self.report.vm_native_functions += 1;
-            *self
-                .report
-                .vm_fallback_reasons
-                .entry(reason.to_owned())
-                .or_default() += 1;
-            return;
-        }
-        let empty = compiler.values(&[]).unwrap();
-        compiler.emit(Op::Return, empty, 0, 0);
-        let id = loop {
-            let id = self.names.rng.range(1, 1 << 24) as u32;
-            if self.programs.iter().all(|(existing, _)| *existing != id) {
-                break id;
-            }
-        };
-        let external = compiler.external.join(",");
-        let args = parameters.join(",");
-        *block = syntax::generated(&format!(
-            "return {}({}[{id}],{{{external}}},{{{args}}}{})",
-            self.runner,
-            self.bank,
-            if variadic { ",..." } else { "" }
-        ));
-        if chunk {
-            self.report.vm_chunks += 1;
-        } else {
-            self.report.vm_functions += 1;
-        }
-        self.report.vm_instructions += compiler.code.len();
-        self.report.vm_fused_instructions += compiler.fused;
-        self.report.vm_native_bridges += compiler.native_bridges;
-        self.report.vm_iteration_bridges += compiler.iteration_bridges;
-        self.report.vm_closure_bridges += compiler.closure_bridges;
-        self.report.virtualized_statements += compiler.statements;
-        self.programs.push((id, compiler));
-    }
-
-    /// Build shared immutable descriptors and a diversified interpreter, separately
-    /// so literal protection can process data without recursively virtualizing helpers.
-    pub fn finish(self) -> (Block, Block) {
-        if self.programs.is_empty() {
-            return (Block::default(), Block::default());
-        }
-        let ops: BTreeSet<_> = self
-            .programs
+    #[test]
+    fn scalar_registers_are_used_only_when_no_bridge_can_observe_cells() {
+        let body = syntax::parse("local n=1;for i=1,5 do n+=i end;return n").unwrap();
+        let pure = compile(&body, &[], "bridge".into(), "callback".into()).unwrap();
+        assert!(!pure
+            .code
             .iter()
-            .flat_map(|(_, p)| p.code.iter().map(|i| i.op.clone()))
-            .collect();
-        let aliases = match self.config.vm_hardening.as_str() {
-            "max" => 4,
-            "client-max" => 3,
-            _ => 2,
-        };
-        let mut taken = BTreeSet::new();
-        let mut codes = BTreeMap::<Op, Vec<u32>>::new();
-        for op in ops {
-            let mut ids = Vec::new();
-            for _ in 0..aliases {
-                let id = loop {
-                    let id = self.names.rng.range(257, 65536) as u32;
-                    if taken.insert(id) {
-                        break id;
-                    }
-                };
-                ids.push(id);
-            }
-            codes.insert(op, ids);
+            .any(|instruction| matches!(instruction.op, Op::Bind | Op::CellGet | Op::CellSet)));
+        for source in [
+            "local n=1;return function()n+=1;return n end",
+            "local n=1;receiver:save(function()return n end)",
+            "local n=1;for _,value in {2,3} do n+=value end;return n",
+        ] {
+            let body = syntax::parse(source).unwrap();
+            let bridged = compile(&body, &[], "bridge".into(), "callback".into()).unwrap();
+            assert!(
+                bridged
+                    .code
+                    .iter()
+                    .any(|instruction| instruction.op == Op::Bind),
+                "{source}"
+            );
         }
-        self.report.vm_opcode_variants += taken.len();
-        let mut bank = format!("local {}={{", self.bank);
-        for (id, program) in &self.programs {
-            let mut order: Vec<_> = (0..program.code.len()).collect();
-            self.names.rng.shuffle(&mut order);
-            let mut positions = vec![0u32; program.code.len() + 1];
-            for (physical, &logical) in order.iter().enumerate() {
-                positions[logical] = physical as u32 + 1;
-            }
-            let mut layout: Vec<_> = (0..5).collect();
-            self.names.rng.shuffle(&mut layout);
-            let seed = self.names.rng.range(1, 1u64 << 32) as u32;
-            let step = self.names.rng.range(1, 1u64 << 32) as u32;
-            let multiplier = self.names.rng.next_u64() as u32;
-            let mut payload = Vec::new();
-            let mut offsets = Vec::new();
-            let mut records = Vec::new();
-            for (physical, &logical) in order.iter().enumerate() {
-                let instruction = &program.code[logical];
-                let choices = &codes[&instruction.op];
-                let opcode = choices[self.names.rng.range(0, choices.len() as u64) as usize];
-                let mut words = [
-                    opcode,
-                    instruction.a,
-                    instruction.b,
-                    instruction.c,
-                    positions[logical + 1],
-                ];
-                match instruction.op {
-                    Op::Jump => words[1] = positions[instruction.a as usize],
-                    Op::JumpFalse | Op::JumpTrue => words[2] = positions[instruction.b as usize],
-                    Op::GenericFor => {
-                        words[1] = positions[instruction.a as usize];
-                        words[3] = positions[instruction.c as usize];
-                    }
-                    _ => {}
-                }
-                let mut bytes = [0u8; 20];
-                for (index, word) in words.iter().enumerate() {
-                    bytes[layout[index] * 4..layout[index] * 4 + 4]
-                        .copy_from_slice(&word.to_le_bytes());
-                }
-                let checksum = bytes.iter().fold(physical as u64 + 1, |hash, byte| {
-                    (hash * 257 + u64::from(*byte)) % 2147483647
-                }) as u32;
-                let mut record = bytes.to_vec();
-                record.extend_from_slice(&checksum.to_le_bytes());
-                let compressed = rle(&record);
-                let serialized = if self.config.vm_pack_bytecode && compressed.len() < record.len()
-                {
-                    let mut data = vec![1];
-                    data.extend(compressed);
-                    data
-                } else {
-                    let mut data = vec![0];
-                    data.extend(record);
-                    data
-                };
-                let serialized = crate::codec::encode(
-                    &serialized,
-                    seed ^ (physical as u32 + 1),
-                    step,
-                    multiplier,
-                );
-                offsets.push(payload.len() + 1);
-                payload.extend_from_slice(&serialized);
-                records.push(format!(
-                    "{{{}}}",
-                    serialized
-                        .iter()
-                        .map(u8::to_string)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                ));
-            }
-            offsets.push(payload.len() + 1);
-            let payload = if self.config.vm_pack_bytecode {
-                syntax::byte_literal(&payload)
-            } else {
-                format!("{{{}}}", records.join(","))
-            };
-            let constants = program
-                .constants
-                .iter()
-                .map(|value| {
-                    let body = Block::from(ReturnStatement::one(value.clone()));
-                    format!("function(){} end", syntax::generate(&body, true))
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            let layout = layout
-                .iter()
-                .map(|slot| (slot * 4 + 1).to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let values = [
-                payload,
-                seed.to_string(),
-                step.to_string(),
-                multiplier.to_string(),
-                format!("{{{layout}}}"),
-                positions[0].to_string(),
-                program.code.len().to_string(),
-                format!("{{{constants}}}"),
-                "{}".into(),
-                "{}".into(),
-                "nil".into(),
-                format!(
-                    "{{{}}}",
-                    offsets
-                        .iter()
-                        .map(usize::to_string)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                ),
-            ];
-            bank.push_str(&format!("[{id}]={{"));
-            for (logical, value) in values.iter().enumerate() {
-                bank.push_str(&format!("[{}]={value},", self.schema[logical]));
-            }
-            bank.push_str("},");
-            if self.config.anti_tamper {
-                self.report.integrity_checks += program.code.len();
-            }
-        }
-        bank.push_str("};");
-        let runtime = runtime(&self.runner, &self.schema, &codes, self.config);
-        let mut runtime = syntax::generated(&runtime);
-        let mut renamer = Renamer::new(self.names);
-        renamer.preserve_name(&self.runner);
-        ScopeVisitor::visit_block(&mut runtime, &mut renamer);
-        (syntax::generated(&bank), runtime)
     }
-}
 
-fn rle(bytes: &[u8]) -> Vec<u8> {
-    let mut result = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let mut end = i + 1;
-        while end < bytes.len() && bytes[end] == bytes[i] && end - i < 255 {
-            end += 1;
+    #[test]
+    fn literal_index_preserves_signed_zero_nil_false_and_binary_strings() {
+        let mut compiler = Compiler::new(&[], "bridge".into(), "callback".into());
+        let zero = compiler.constant_id(0.0.into());
+        let negative_zero = compiler.constant_id((-0.0).into());
+        assert_ne!(zero, negative_zero);
+        assert_eq!(zero, compiler.constant_id(0.0.into()));
+        assert_eq!(negative_zero, compiler.constant_id((-0.0).into()));
+        let nil = compiler.constant_id(Expression::nil());
+        let false_value = compiler.constant_id(Expression::False(None));
+        assert_ne!(nil, false_value);
+        assert_eq!(nil, compiler.constant_id(Expression::nil()));
+        assert_eq!(false_value, compiler.constant_id(Expression::False(None)));
+        let binary: Expression = StringExpression::from_value(vec![0, 255, b'1']).into();
+        let id = compiler.constant_id(binary.clone());
+        assert_eq!(id, compiler.constant_id(binary));
+        for number in 1..=4096 {
+            let id = compiler.constant_id((number as f64).into());
+            assert_eq!(id, compiler.constant_id((number as f64).into()));
         }
-        let count = end - i;
-        if count >= 4 || bytes[i] == 255 {
-            result.extend([255, count as u8, bytes[i]]);
-        } else {
-            result.extend_from_slice(&bytes[i..end]);
-        }
-        i = end;
-    }
-    result
-}
-
-impl NodeProcessor for FunctionVm<'_> {}
-impl NodePostProcessor for FunctionVm<'_> {
-    fn process_after_local_function_statement(&mut self, function: &mut FunctionAssignment) {
-        let parameters = function
-            .iter_parameters()
-            .map(|p| p.get_name().to_owned())
-            .collect();
-        let variadic = function.is_variadic();
-        self.compile(function.mutate_block(), parameters, variadic);
-    }
-    fn process_after_function_expression(&mut self, function: &mut FunctionExpression) {
-        let parameters = function
-            .iter_parameters()
-            .map(|p| p.get_name().to_owned())
-            .collect();
-        let variadic = function.is_variadic();
-        self.compile(function.mutate_block(), parameters, variadic);
-    }
-    fn process_after_function_statement(&mut self, function: &mut FunctionStatement) {
-        let mut parameters = Vec::new();
-        if function.get_name().has_method() {
-            parameters.push("self".to_owned());
-        }
-        parameters.extend(function.iter_parameters().map(|p| p.get_name().to_owned()));
-        let variadic = function.is_variadic();
-        self.compile(function.mutate_block(), parameters, variadic);
-    }
-}
-
-fn runtime(
-    runner: &str,
-    schema: &[usize],
-    codes: &BTreeMap<Op, Vec<u32>>,
-    config: &ObfuscationConfig,
-) -> String {
-    let mut source = include_str!("function_vm_runtime.luau").to_owned();
-    for (index, slot) in schema.iter().enumerate() {
-        source = source.replace(&format!("__S{}__", index + 1), &slot.to_string());
-    }
-    source = source.replace("__RUNNER__", runner);
-    source = source.replace(
-        "__PACKED__",
-        if config.vm_pack_bytecode {
-            "true"
-        } else {
-            "false"
-        },
-    );
-    source = source.replace(
-        "__CACHED__",
-        if config.vm_predecode_bytecode {
-            "true"
-        } else {
-            "false"
-        },
-    );
-    source = source.replace(
-        "__INTEGRITY__",
-        if config.anti_tamper { "true" } else { "false" },
-    );
-    source = source.replace(
-        "__EPHEMERAL__",
-        if config.vm_hardening == "max" {
-            "true"
-        } else {
-            "false"
-        },
-    );
-    let mut handlers = Vec::new();
-    for (op, ids) in codes {
-        for id in ids {
-            handlers.push((*id, handler(op)));
-        }
-    }
-    handlers.sort_unstable_by_key(|(id, _)| *id);
-    source.replace("__HANDLERS__", &dispatch_tree(&handlers))
-}
-
-fn dispatch_tree(handlers: &[(u32, String)]) -> String {
-    if handlers.len() == 1 {
-        let (id, code) = &handlers[0];
-        return format!("if op=={id} then {code} else fail()end;");
-    }
-    let middle = handlers.len() / 2;
-    format!(
-        "if op<{} then {}else {}end;",
-        handlers[middle].0,
-        dispatch_tree(&handlers[..middle]),
-        dispatch_tree(&handlers[middle..])
-    )
-}
-
-fn handler(op: &Op) -> String {
-    match op {
-        Op::Constant => "r[a]=constant(b)", Op::Move => "r[a]=r[b]", Op::Read => "r[a]=external[b]()", Op::Write => "external[a](r[b],true)",
-        Op::Index => "r[a]=r[b][r[c]]", Op::SetIndex => "r[a][r[b]]=r[c]", Op::Table => "r[a]=createTable(b)",
-        Op::TableExtend => "local values=r[b];local expanded=createTable(c-1+values.n);for key,value in nextValue,r[a] do expanded[key]=value end;for i=1,values.n do expanded[c+i-1]=values[i]end;r[a]=expanded",
-        Op::List => "r[a]={n=0}", Op::Push => "local list=r[a];list.n+=1;list[list.n]=r[b]",
-        Op::Extend => "local list=r[a];local values=r[b];for i=1,values.n do list[list.n+i]=values[i]end;list.n+=values.n",
-        Op::Item => "r[a]=r[b][c]", Op::Call => "r[a]=r[b](unpackValues(r[c],1,r[c].n))", Op::CallMany => "r[a]=packValues(r[b](unpackValues(r[c],1,r[c].n)))",
-        Op::Vararg => "r[a]=varargs[1]", Op::VarargMany => "r[a]=varargs", Op::Return => "return 2,r[a]",
-        Op::Jump => "pc=a", Op::JumpFalse => "if not r[a]then pc=b end", Op::JumpTrue => "if r[a]then pc=b end",
-        Op::ForCheck => "local state=r[b];r[a]=(state[3]>0 and state[1]<=state[2])or(state[3]<=0 and state[1]>=state[2])",
-        Op::ForNext => "r[a][1]+=r[a][3]", Op::Format => "r[a]=formatValues(unpackValues(r[b],1,r[b].n))",
-        Op::Native => "if c==0 then r[a]=external[b](r,unpackValues(varargs,1,varargs.n))else r[a]=packValues(external[b](r,unpackValues(varargs,1,varargs.n)))end",
-        Op::GenericFor => "local signal,result=external[b](r,function()return execute(a)end,unpackValues(varargs,1,varargs.n));if signal==2 then return signal,result end;pc=c",
-        Op::Signal => "return a,nil",
-        Op::Bind => "r[a]={r[b]}", Op::CellGet => "r[a]=r[b][1]", Op::CellSet => "r[a][1]=r[b]",
-        Op::Closure => "local cells={};for i=1,#r[c] do local id=r[c][i];cells[id]=r[id]end;r[a]=external[b](cells)",
-        Op::Binary(operator) => return format!("r[a]=r[b]{operator}r[c]"),
-        Op::BinaryConstant(operator) => return format!("r[a]=r[b]{operator}constant(c)"),
-        Op::Unary(operator) => return format!("r[a]={operator} r[b]"),
-    }.to_owned()
-}
-
-struct Bridge {
-    parameter: String,
-    bindings: HashMap<String, u32>,
-    nested_closure: bool,
-    introspection: bool,
-}
-
-/// Rewrite only free references of a closure. Each captured register contains a
-/// mutable cell; factories retain the cells that existed at creation time, so
-/// declarations in later loop iterations cannot retarget an earlier closure.
-struct Capture {
-    parameter: String,
-    bindings: HashMap<String, u32>,
-    masks: Vec<HashSet<String>>,
-    cells: BTreeSet<u32>,
-    unsupported: bool,
-    nested_closure: bool,
-    introspection: bool,
-}
-impl Capture {
-    fn reference(&mut self, name: &Identifier) -> Option<IndexExpression> {
-        if self
-            .masks
-            .iter()
-            .rev()
-            .any(|scope| scope.contains(name.get_name()))
-        {
-            return None;
-        }
-        let Some(&register) = self.bindings.get(name.get_name()) else {
-            if matches!(name.get_name().as_str(), "getfenv" | "setfenv" | "debug") {
-                self.introspection = true;
-            }
-            return None;
-        };
-        self.cells.insert(register);
-        Some(IndexExpression::new(
-            IndexExpression::new(Prefix::from_name(self.parameter.as_str()), register as f64),
-            1.0,
-        ))
-    }
-    fn mask(&mut self, name: &str) {
-        self.masks.last_mut().unwrap().insert(name.to_owned());
-    }
-}
-impl Scope for Capture {
-    fn push(&mut self) {
-        self.masks.push(HashSet::new());
-    }
-    fn pop(&mut self) {
-        self.masks.pop();
-    }
-    fn insert(&mut self, name: &mut String) {
-        self.mask(name);
-    }
-    fn insert_self(&mut self) {
-        self.mask("self");
-    }
-    fn insert_local(&mut self, name: &mut String, _: Option<&mut Expression>) {
-        self.mask(name);
-    }
-    fn insert_local_function(&mut self, function: &mut FunctionAssignment) {
-        self.mask(function.get_name());
-    }
-}
-impl NodeProcessor for Capture {
-    fn process_function_expression(&mut self, _: &mut FunctionExpression) {
-        self.nested_closure = true;
-    }
-    fn process_type_function(&mut self, _: &mut TypeFunctionStatement) {
-        self.unsupported = true;
-    }
-    fn process_expression(&mut self, expression: &mut Expression) {
-        if let Expression::Identifier(name) = expression {
-            if let Some(reference) = self.reference(name) {
-                *expression = reference.into();
-            }
-        }
-    }
-    fn process_prefix_expression(&mut self, prefix: &mut Prefix) {
-        if let Prefix::Identifier(name) = prefix {
-            if let Some(reference) = self.reference(name) {
-                *prefix = reference.into();
-            }
-        }
-    }
-    fn process_variable(&mut self, variable: &mut Variable) {
-        if let Variable::Identifier(name) = variable {
-            if let Some(reference) = self.reference(name) {
-                *variable = reference.into();
-            }
-        }
-    }
-}
-impl Bridge {
-    fn reference(&self, name: &Identifier) -> Option<IndexExpression> {
-        self.bindings.get(name.get_name()).map(|register| {
-            IndexExpression::new(
-                IndexExpression::new(Prefix::from_name(self.parameter.as_str()), *register as f64),
-                1.0,
-            )
-        })
-    }
-}
-impl NodeProcessor for Bridge {
-    fn process_variable_expression(&mut self, name: &mut Identifier) {
-        if matches!(name.get_name().as_str(), "getfenv" | "setfenv" | "debug") {
-            self.introspection = true;
-        }
-    }
-    fn process_function_expression(&mut self, _: &mut FunctionExpression) {
-        self.nested_closure = true;
-    }
-    fn process_expression(&mut self, expression: &mut Expression) {
-        if let Expression::Identifier(name) = expression {
-            if let Some(reference) = self.reference(name) {
-                *expression = reference.into();
-            }
-        }
-    }
-    fn process_prefix_expression(&mut self, prefix: &mut Prefix) {
-        if let Prefix::Identifier(name) = prefix {
-            if let Some(reference) = self.reference(name) {
-                *prefix = reference.into();
-            }
-        }
+        assert_eq!(compiler.constants.len(), 4096 + 5);
     }
 }

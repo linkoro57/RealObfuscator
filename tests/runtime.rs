@@ -136,6 +136,27 @@ fn profiles() -> Vec<ObfuscationConfig> {
 
 const CASES: &[(&str, &str)] = &[
     (
+        "cached_nil_false_and_empty_varargs",
+        r#"
+        local function echo(...) return ... end
+        local function classify(n)
+            if n==1 then return nil elseif n==2 then return false elseif n==3 then return true end
+            return 0,-0.0
+        end
+        local function probe(...)
+            local present=table.pack(echo(...))
+            local empty=table.pack(echo())
+            return present.n,present[1],present[2],empty.n
+        end
+        for pass=1,4 do
+            for n=1,4 do print(classify(n)) end
+            print(probe());print(probe(false,nil));print(probe(nil,false))
+            local positive,negative=classify(4)
+            print(1/positive,1/negative)
+        end
+        "#,
+    ),
+    (
         "method_closure_cells",
         r#"
         local shared=0

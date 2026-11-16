@@ -1,5 +1,5 @@
 use crate::{
-    lexer::{lex, Kind},
+    lexer::{Kind, Token},
     rng::Rng,
 };
 use darklua_core::{
@@ -17,14 +17,19 @@ pub(crate) struct Names {
 }
 
 impl Names {
-    pub fn new(source: &str, rng: Rng, min: usize, max: usize) -> Self {
-        let used = lex(source).unwrap_or_default().into_iter()
-            .filter(|t| matches!(t.kind, Kind::Name | Kind::Keyword))
-            .map(|t| t.text)
-            .chain("and break continue do else elseif end export false for function if in local nil not or repeat return then true type until while self".split_whitespace().map(str::to_owned))
-            // Reserve the helper template's temporary names and built-ins before
-            // allocating its public interface, including for short-name settings.
-            .chain("id cached entry data state out hash i c v result string table bit32 error".split_whitespace().map(str::to_owned)).collect();
+    pub fn new(tokens: &[Token], rng: Rng, min: usize, max: usize) -> Self {
+        const KEYWORDS: &str = "and break continue do else elseif end export false for function if in local nil not or repeat return then true type until while self";
+        // Reserve helper temporaries and built-ins before allocating their interface,
+        // including when callers request very short names.
+        const HELPER_NAMES: &str =
+            "id cached entry data state out hash i c v result string table bit32 error";
+        let used = tokens
+            .iter()
+            .filter(|token| matches!(token.kind, Kind::Name | Kind::Keyword))
+            .map(|token| token.text.clone())
+            .chain(KEYWORDS.split_whitespace().map(str::to_owned))
+            .chain(HELPER_NAMES.split_whitespace().map(str::to_owned))
+            .collect();
         Self {
             rng,
             used,

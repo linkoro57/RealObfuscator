@@ -29,10 +29,8 @@ impl NodePostVisitor<ControlFlow<'_>> for ControlVisitor {
     fn visit_type_function_statement(_: &mut TypeFunctionStatement, _: &mut ControlFlow<'_>) {}
     fn visit_type(_: &mut Type, _: &mut ControlFlow<'_>) {}
     fn visit_block(block: &mut Block, pass: &mut ControlFlow<'_>) {
-        if let (Some(runner), Some(LastStatement::Return(ret))) =
-            (pass.skip_runner, block.get_last_statement())
-        {
-            if ret.iter_expressions().next().is_some_and(|value| matches!(value, Expression::Call(call) if matches!(call.get_prefix(), Prefix::Identifier(name) if name.get_name() == runner))) { return; }
+        if is_vm_entry(block, pass.skip_runner) {
+            return;
         }
         for statement in block.iter_mut_statements() {
             Self::visit_statement(statement, pass);
@@ -42,6 +40,19 @@ impl NodePostVisitor<ControlFlow<'_>> for ControlVisitor {
         }
         pass.process_after_block(block);
     }
+}
+
+/// VM entry bodies already dispatch through their interpreter. Flattening them
+/// again adds a second dispatcher and can transform generated bridge plumbing.
+fn is_vm_entry(block: &Block, runner: Option<&str>) -> bool {
+    let Some(runner) = runner else { return false };
+    let Some(LastStatement::Return(ret)) = block.get_last_statement() else {
+        return false;
+    };
+    let Some(Expression::Call(call)) = ret.iter_expressions().next() else {
+        return false;
+    };
+    matches!(call.get_prefix(), Prefix::Identifier(name) if name.get_name() == runner)
 }
 
 impl ControlFlow<'_> {

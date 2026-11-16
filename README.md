@@ -33,7 +33,7 @@ On Windows the executable is `target/release/realobfuscator.exe`. Default file o
 | `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch and decoy handlers. |
 | `vm` | Register-bytecode compilation for supported chunks/functions; captured-variable cells; randomized physical records, operand layouts and opcode aliases; constant fusion; incremental decoding and record integrity. Remaining compatible statement regions use conservative dispatch. |
 
-The function compiler covers local bindings, assignments, native arithmetic/comparison operators, tables, indexing, short-circuit logic, interpolated strings, calls, recursive functions, closures, varargs, multiple returns, branches, loops, `break` and `continue`. Each binding uses a mutable cell; closure factories retain the cells present at creation, preserving captures across loop iterations and writes after a function returns. Method calls and generalized iteration use native protocol bridges with VM registers/body execution to preserve lookup order, `__iter` and yielding behavior.
+The function compiler covers local bindings, assignments, native arithmetic/comparison operators, tables, indexing, short-circuit logic, interpolated strings, calls, recursive functions, closures, varargs, multiple returns, branches, loops, `break` and `continue`. Bindings observable by closures or native bridges use mutable cells; pure VM bodies keep their bindings directly in registers. Closure factories retain the cells present at creation, preserving captures across loop iterations and writes after a function returns. Method calls and generalized iteration use native protocol bridges with VM registers/body execution to preserve lookup order, `__iter` and yielding behavior.
 
 Functions needing unsupported constructs retain their native bodies. Direct environment/stack introspection, preserved type declarations in a candidate function, and closures embedded in iterator expressions can require fallback. Child functions may still be compiled independently. Fallback warnings appear even without `--stats`, unless `--quiet` is used. `--stats` reports compiled functions, encoded instructions, native functions and fallback reasons, and counts method, iteration and closure bridges separately. `--require-function-vm` rejects whole-function fallbacks before writing output; it still permits the reported native protocol bridges.
 
@@ -110,7 +110,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Protection levels map to these passes: `Minimal` enables renaming, strings and numbers; `Standard` adds native dispatch; `Maximum` adds property indirection and integrity checks; `Paranoid` enables the function-bytecode backend with maximal diversification, incremental decoding and disabled retained string caching.
 
+New callers can use typed configuration builders while existing string fields remain compatible:
+
+```rust
+use realobfuscator::{ObfuscationConfig, StringDecodeMode, VmHardening};
+
+let config = ObfuscationConfig::default()
+    .with_string_decode_mode(StringDecodeMode::Lazy)
+    .with_vm_hardening(VmHardening::Max);
+```
+
+The [architecture guide](docs/architecture.md) describes pass ordering, VM contracts,
+capture semantics and file publication invariants.
+
 ## Verification
+
+The [performance optimization report](docs/performance-improvements.md) documents
+the current implementation changes, matched timings and cold-load tradeoffs.
+
+The [benchmark suite](docs/benchmarks.md) covers 24 workload families and 44
+profiles, with a 9,504-case exhaustive matrix, Rust microbenchmarks, Luau runtime
+measurements, CSV exports and a comparison tool:
+
+```sh
+cargo bench --bench obfuscation --locked -- --suite quick
+cargo bench --bench obfuscation --locked -- --suite standard --runtime
+cargo bench --bench obfuscation --locked -- --suite full --list
+```
 
 ```sh
 cargo fmt --check

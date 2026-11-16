@@ -1,5 +1,9 @@
 # Local performance probe
 
+Use the [benchmark suite](benchmarks.md) for automated matrices, microbenchmarks,
+source scaling, Luau load/warm execution, CSV exports and regression comparison.
+The historical measurements below retain their original scope.
+
 Measured on 2026-11-13 with the release build of RealObfuscator 2.2.0 and the official Luau 0.741 Windows interpreter. This is a small local probe, not a security evaluation, a Roblox frame-time benchmark, or a comparison with Luraph.
 
 The source is [examples/workload.luau](../examples/workload.luau). It runs a numeric loop of 100 iterations five times, verifies its work by printing `429250`, and prints elapsed `os.clock()` time. Results below are the median of five fresh interpreter processes per variant, with seed 42 for generated files. Timing starts inside the script after generated helper/prototype initialization; startup, parsing, compilation and initial payload decoding are excluded. Small native timings are particularly sensitive to timer resolution and machine load.

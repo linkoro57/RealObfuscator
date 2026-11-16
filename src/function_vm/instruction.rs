@@ -1,0 +1,45 @@
+//! Logical instructions before physical record placement and encoding.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Op {
+    Constant,
+    Move,
+    Read,
+    Write,
+    Index,
+    SetIndex,
+    Table,
+    TableExtend,
+    List,
+    Push,
+    Extend,
+    Item,
+    Call,
+    CallMany,
+    Vararg,
+    VarargMany,
+    Return,
+    Jump,
+    JumpFalse,
+    JumpTrue,
+    Binary(&'static str),
+    BinaryConstant(&'static str),
+    Unary(&'static str),
+    ForCheck,
+    ForNext,
+    Format,
+    Native,
+    GenericFor,
+    Signal,
+    Bind,
+    CellGet,
+    CellSet,
+    Closure,
+}
+
+#[derive(Clone)]
+pub(super) struct Instruction {
+    pub(super) op: Op,
+    pub(super) a: u32,
+    pub(super) b: u32,
+    pub(super) c: u32,
+}

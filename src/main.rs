@@ -1,8 +1,12 @@
-use realobfuscator::{rng::Rng, DeadCodeDensity, ObfuscationConfig, Obfuscator, ProtectionLevel};
+#![forbid(unsafe_code)]
+
+mod file_io;
+
+use file_io::{atomic_write, collect, resolved};
+use realobfuscator::{DeadCodeDensity, ObfuscationConfig, Obfuscator, ProtectionLevel};
 use std::{
     env, fs,
-    io::Write,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process,
     time::Instant,
 };
@@ -276,44 +280,14 @@ fn config(args: &Args) -> ObfuscationConfig {
     config
 }
 
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("output");
-    let tmp = path.with_file_name(format!(
-        ".{name}.{}.{:016x}.tmp",
-        process::id(),
-        Rng::random().next_u64()
-    ));
-    // Never truncate or follow an existing temporary file or symlink.
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-        .map_err(|e| e.to_string())?;
-    let result = (|| {
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result.map_err(|e: std::io::Error| e.to_string())
-}
-
 fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> bool {
     let result = (|| {
         let source = fs::read_to_string(input).map_err(|e| e.to_string())?;
         let output_code = obfuscator
             .obfuscate_with_report(&source)
             .map_err(|e| e.to_string())?;
-        atomic_write(output, &output_code.code)?;
+        atomic_write(output, &output_code.code)
+            .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
         if !args.quiet {
             let report = &output_code.report;
             if let Some(reason) = &report.vm_chunk_fallback {
@@ -370,72 +344,6 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
     } else {
         true
     }
-}
-
-fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let kind = entry.file_type().map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if kind.is_symlink() {
-            continue;
-        }
-        if kind.is_dir() {
-            collect(&path, files)?;
-        } else if kind.is_file()
-            && matches!(
-                path.extension()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_ascii_lowercase)
-                    .as_deref(),
-                Some("lua" | "luau")
-            )
-            && !path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s.to_ascii_lowercase().ends_with(".obf"))
-        {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// Resolve missing output paths through their nearest existing ancestor as well.
-fn resolved(path: &Path) -> std::io::Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        env::current_dir()?.join(path)
-    };
-    let mut ancestor = absolute.as_path();
-    let mut suffix = Vec::new();
-    while !ancestor.try_exists()? {
-        if let Some(name) = ancestor.file_name() {
-            suffix.push(name.to_owned());
-        } else {
-            // Deal with trailing `..` without treating it as a literal file name.
-            let mut normalized = PathBuf::new();
-            for component in absolute.components() {
-                match component {
-                    Component::CurDir => {}
-                    Component::ParentDir => {
-                        normalized.pop();
-                    }
-                    other => normalized.push(other.as_os_str()),
-                }
-            }
-            return resolved(&normalized);
-        }
-        ancestor = ancestor
-            .parent()
-            .ok_or_else(|| std::io::Error::other("cannot resolve output path"))?;
-    }
-    let mut output = fs::canonicalize(ancestor)?;
-    for component in suffix.into_iter().rev() {
-        output.push(component);
-    }
-    Ok(output)
 }
 
 fn main() {

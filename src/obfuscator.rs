@@ -3,7 +3,7 @@ use crate::{
     constants::{Constants, Indirection},
     control_flow::{ControlFlow, ControlVisitor},
     function_vm::FunctionVm,
-    lexer::{lex, Kind},
+    lexer::{lex, Kind, Token},
     names::{Names, Renamer},
     syntax,
 };
@@ -96,12 +96,7 @@ impl Obfuscator {
     }
 
     fn obfuscate_inner(&self, source: &str) -> Result<ObfuscationOutput, ObfuscationError> {
-        self.config.validate().map_err(ObfuscationError)?;
-        if self.config.build_id.contains(['\r', '\n']) {
-            return Err(ObfuscationError(
-                "build_id must not contain newlines".into(),
-            ));
-        }
+        let options = self.config.validated_options().map_err(ObfuscationError)?;
         // Parsing comes before all mutations. Invalid source is never written as output.
         let mut block = syntax::parse(source)?;
         let tokens = lex(source).map_err(|e| ObfuscationError(e.to_string()))?;
@@ -116,18 +111,9 @@ impl Obfuscator {
                 .process(&mut block, &context)
                 .map_err(ObfuscationError)?;
         }
-        // Domain-separate files: a fixed project seed is deterministic without reusing
-        // the same names, pool keys and dispatch layout in every module.
-        let source_hash = source
-            .as_bytes()
-            .iter()
-            .fold(0xcbf29ce484222325u64, |h, b| {
-                (h ^ u64::from(*b)).wrapping_mul(0x100000001b3)
-            });
-        let mut root_rng = self.config.rng.clone();
-        let rng = crate::rng::Rng::new(root_rng.next_u64() ^ source_hash);
+        let rng = self.source_rng(source);
         let mut names = Names::new(
-            source,
+            &tokens,
             rng,
             self.config.name_min_length,
             self.config.name_max_length,
@@ -144,8 +130,9 @@ impl Obfuscator {
             report.hidden_fields = indirection.count;
         }
         let mut vm_runner = None;
-        let (mut vm_data, vm_runtime) = if self.config.virtualize {
-            let mut compiler = FunctionVm::new(&self.config, &mut names, &mut report);
+        let (mut vm_data, mut vm_runtime) = if self.config.virtualize {
+            let mut compiler =
+                FunctionVm::new(&self.config, options.hardening, &mut names, &mut report);
             vm_runner = Some(compiler.runner().to_owned());
             RuntimeVisitor::visit_block(&mut block, &mut compiler);
             compiler.compile_chunk(&mut block);
@@ -153,6 +140,54 @@ impl Obfuscator {
         } else {
             (Block::default(), Block::default())
         };
+        self.check_vm_coverage(&report)?;
+        let mut constants =
+            Constants::new(&self.config, options.decode_mode, &mut names, &mut report);
+        RuntimeVisitor::visit_block(&mut block, &mut constants);
+        RuntimeVisitor::visit_block(&mut vm_data, &mut constants);
+        let mut prefix = constants.prefix();
+        for statement in vm_data.take_statements() {
+            prefix.push_statement(statement);
+        }
+        self.transform_control_flow(
+            &mut block,
+            &mut prefix,
+            &mut names,
+            &mut report,
+            vm_runner.as_deref(),
+        );
+        let mut helper_renamer = Renamer::new(&mut names);
+        helper_renamer.preserve_root_bindings(&prefix);
+        ScopeVisitor::visit_block(&mut prefix, &mut helper_renamer);
+        // The interpreter was already scope-renamed by FunctionVm. Appending it
+        // here avoids traversing and renaming its internals a second time.
+        for statement in vm_runtime.take_statements() {
+            prefix.push_statement(statement);
+        }
+        if let Some(error) = names.error {
+            return Err(ObfuscationError(error));
+        }
+        let mut body = prefix.take_statements();
+        body.extend(block.take_statements());
+        block.set_statements(body);
+        let code = self.render(block, &tokens)?;
+        report.output_bytes = code.len();
+        Ok(ObfuscationOutput { code, report })
+    }
+    fn source_rng(&self, source: &str) -> crate::rng::Rng {
+        // Domain-separate files: a fixed project seed is deterministic without reusing
+        // the same names, pool keys and dispatch layout in every module.
+        let source_hash = source
+            .as_bytes()
+            .iter()
+            .fold(0xcbf29ce484222325u64, |h, b| {
+                (h ^ u64::from(*b)).wrapping_mul(0x100000001b3)
+            });
+        let mut root_rng = self.config.rng.clone();
+        crate::rng::Rng::new(root_rng.next_u64() ^ source_hash)
+    }
+
+    fn check_vm_coverage(&self, report: &ObfuscationReport) -> Result<(), ObfuscationError> {
         if self.config.require_function_vm && report.vm_native_functions != 0 {
             let reasons = report
                 .vm_fallback_reasons
@@ -174,16 +209,17 @@ impl Obfuscator {
                     .unwrap_or("chunk compilation disabled")
             )));
         }
-        let mut constants = Constants::new(&self.config, &mut names, &mut report);
-        RuntimeVisitor::visit_block(&mut block, &mut constants);
-        RuntimeVisitor::visit_block(&mut vm_data, &mut constants);
-        let mut prefix = constants.prefix();
-        for statement in vm_data.take_statements() {
-            prefix.push_statement(statement);
-        }
-        for statement in vm_runtime.iter_statements().cloned() {
-            prefix.push_statement(statement);
-        }
+        Ok(())
+    }
+
+    fn transform_control_flow(
+        &self,
+        block: &mut Block,
+        prefix: &mut Block,
+        names: &mut Names,
+        report: &mut ObfuscationReport,
+        vm_runner: Option<&str>,
+    ) {
         if self.config.control_flow_flatten || self.config.virtualize {
             let byte = names.fresh();
             let xor = names.fresh();
@@ -192,16 +228,16 @@ impl Obfuscator {
             let fail = names.fresh();
             let mut pass = ControlFlow {
                 config: &self.config,
-                names: &mut names,
-                report: &mut report,
+                names,
+                report,
                 byte: byte.clone(),
                 xor: xor.clone(),
                 mix: mix.clone(),
                 band: band.clone(),
                 fail: fail.clone(),
-                skip_runner: vm_runner.as_deref(),
+                skip_runner: vm_runner,
             };
-            ControlVisitor::visit_block(&mut block, &mut pass);
+            ControlVisitor::visit_block(block, &mut pass);
             if report.flattened_regions != 0 {
                 // Capture runtime helpers before source declarations can shadow globals.
                 let helpers = if self.config.virtualize {
@@ -216,15 +252,9 @@ impl Obfuscator {
                 }
             }
         }
-        let mut helper_renamer = Renamer::new(&mut names);
-        helper_renamer.preserve_root_bindings(&prefix);
-        ScopeVisitor::visit_block(&mut prefix, &mut helper_renamer);
-        if let Some(error) = names.error {
-            return Err(ObfuscationError(error));
-        }
-        let mut body = prefix.take_statements();
-        body.extend(block.take_statements());
-        block.set_statements(body);
+    }
+
+    fn render(&self, mut block: Block, tokens: &[Token]) -> Result<String, ObfuscationError> {
         if self.config.wrap_in_iife {
             block = syntax::parse(&format!(
                 "return(function(...) {} end)(...)",
@@ -256,7 +286,7 @@ impl Obfuscator {
         ));
         if !self.config.strip_comments {
             // Retain comment text, detached from source positions after AST rewriting.
-            for token in &tokens {
+            for token in tokens {
                 if token.kind == Kind::Comment && !token.text.starts_with("#!") {
                     code.push_str(&token.text);
                     code.push('\n');
@@ -264,8 +294,7 @@ impl Obfuscator {
             }
         }
         code.push_str(&body);
-        report.output_bytes = code.len();
-        Ok(ObfuscationOutput { code, report })
+        Ok(code)
     }
 }
 
@@ -284,6 +313,48 @@ pub fn obfuscate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_options_preserve_legacy_seeded_outputs() {
+        use crate::{StringDecodeMode, VmHardening};
+        for hardening in [VmHardening::Basic, VmHardening::ClientMax, VmHardening::Max] {
+            for mode in [StringDecodeMode::Lazy, StringDecodeMode::Eager] {
+                let base = ObfuscationConfig::default()
+                    .with_seed(21)
+                    .with_level(crate::ProtectionLevel::Paranoid);
+                let mut legacy = base.clone();
+                legacy.vm_hardening = hardening.as_str().into();
+                legacy.string_decode_mode = mode.as_str().into();
+                let typed = base
+                    .with_vm_hardening(hardening)
+                    .with_string_decode_mode(mode);
+                let source = "local function f(x)return x+17,'hello' end;print(f(2))";
+                let expected = Obfuscator::new(legacy)
+                    .obfuscate_with_report(source)
+                    .unwrap();
+                let actual = Obfuscator::new(typed)
+                    .obfuscate_with_report(source)
+                    .unwrap();
+                assert_eq!(expected.code, actual.code);
+                assert_eq!(expected.report, actual.report);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_options_are_rejected_before_obfuscation() {
+        let base = ObfuscationConfig::default();
+        let mut configurations = [base.clone(), base.clone(), base];
+        configurations[0].string_decode_mode = "unknown".into();
+        configurations[1].vm_hardening = "unknown".into();
+        configurations[2].build_id = "invalid\nreturn 1".into();
+        for config in configurations {
+            let reason = config.validate().unwrap_err();
+            let error = Obfuscator::new(config).obfuscate("return 1").unwrap_err();
+            assert_eq!(error.0, reason);
+        }
+    }
+
     #[test]
     fn deterministic_across_instances_and_repeated_calls() {
         let config = ObfuscationConfig::default().with_seed(42);

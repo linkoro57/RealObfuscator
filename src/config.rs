@@ -1,4 +1,78 @@
 use crate::rng::Rng;
+use std::str::FromStr;
+
+/// When protected string literals are decoded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StringDecodeMode {
+    Lazy,
+    Eager,
+}
+
+impl StringDecodeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lazy => "lazy",
+            Self::Eager => "eager",
+        }
+    }
+}
+
+impl FromStr for StringDecodeMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "lazy" => Ok(Self::Lazy),
+            "eager" => Ok(Self::Eager),
+            _ => Err("string_decode_mode must be lazy or eager".into()),
+        }
+    }
+}
+
+/// Opcode diversification and plaintext constant lifetime in the register VM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmHardening {
+    Basic,
+    ClientMax,
+    Max,
+}
+
+impl VmHardening {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Basic => "basic",
+            Self::ClientMax => "client-max",
+            Self::Max => "max",
+        }
+    }
+
+    pub(crate) fn opcode_aliases(self) -> usize {
+        match self {
+            Self::Basic => 2,
+            Self::ClientMax => 3,
+            Self::Max => 4,
+        }
+    }
+}
+
+impl FromStr for VmHardening {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "basic" => Ok(Self::Basic),
+            "client-max" => Ok(Self::ClientMax),
+            "max" => Ok(Self::Max),
+            _ => Err("unknown VM hardening profile".into()),
+        }
+    }
+}
+
+/// Parsed once at the pipeline boundary, after validating the public configuration.
+pub(crate) struct ValidatedOptions {
+    pub decode_mode: StringDecodeMode,
+    pub hardening: VmHardening,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProtectionLevel {
@@ -47,6 +121,7 @@ pub struct ObfuscationConfig {
     pub require_chunk_vm: bool,
     pub name_min_length: usize,
     pub name_max_length: usize,
+    /// `lazy` or `eager`; prefer `with_string_decode_mode` in new code.
     pub string_decode_mode: String,
     pub mba_depth: u8,
     pub skip_trivial_numbers: bool,
@@ -54,6 +129,7 @@ pub struct ObfuscationConfig {
     pub dead_code_density: DeadCodeDensity,
     pub fake_function_count: usize,
     pub wrap_in_iife: bool,
+    /// `basic`, `client-max` or `max`; prefer `with_vm_hardening` in new code.
     pub vm_hardening: String,
     pub vm_pack_bytecode: bool,
     pub vm_pack_constants: bool,
@@ -110,6 +186,16 @@ impl Default for ObfuscationConfig {
 }
 
 impl ObfuscationConfig {
+    pub fn with_string_decode_mode(mut self, mode: StringDecodeMode) -> Self {
+        self.string_decode_mode = mode.as_str().into();
+        self
+    }
+
+    pub fn with_vm_hardening(mut self, hardening: VmHardening) -> Self {
+        self.vm_hardening = hardening.as_str().into();
+        self
+    }
+
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
         self.build_id = "development".into();
@@ -143,6 +229,10 @@ impl ObfuscationConfig {
         c
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.validated_options().map(|_| ())
+    }
+
+    pub(crate) fn validated_options(&self) -> Result<ValidatedOptions, String> {
         if self.require_chunk_vm && (!self.virtualize || !self.virtualize_chunk) {
             return Err("require_chunk_vm requires VM mode with chunk compilation enabled".into());
         }
@@ -173,12 +263,14 @@ impl ObfuscationConfig {
         if !(1..=3).contains(&self.mba_depth) {
             return Err("mba_depth must be between 1 and 3".into());
         }
-        if !matches!(self.string_decode_mode.as_str(), "lazy" | "eager") {
-            return Err("string_decode_mode must be lazy or eager".into());
+        let decode_mode = self.string_decode_mode.parse()?;
+        let hardening = self.vm_hardening.parse()?;
+        if self.build_id.contains(['\r', '\n']) {
+            return Err("build_id must not contain newlines".into());
         }
-        if !matches!(self.vm_hardening.as_str(), "basic" | "client-max" | "max") {
-            return Err("unknown VM hardening profile".into());
-        }
-        Ok(())
+        Ok(ValidatedOptions {
+            decode_mode,
+            hardening,
+        })
     }
 }

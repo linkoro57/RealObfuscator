@@ -29,10 +29,35 @@ pub(crate) fn generated(source: &str) -> Block {
 }
 
 pub(crate) fn byte_literal(bytes: &[u8]) -> String {
-    let mut output = String::from("\"");
+    let mut output = String::with_capacity(bytes.len().saturating_mul(4).saturating_add(2));
+    output.push('"');
     for byte in bytes {
-        output.push_str(&format!("\\{byte:03}"));
+        output.push('\\');
+        output.push(char::from(b'0' + byte / 100));
+        output.push(char::from(b'0' + (byte / 10) % 10));
+        output.push(char::from(b'0' + byte % 10));
     }
     output.push('"');
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decimal_byte_literals_round_trip_every_byte() {
+        for bytes in [Vec::new(), (0..=255).collect()] {
+            let literal = byte_literal(&bytes);
+            assert_eq!(literal.len(), bytes.len() * 4 + 2);
+            let block = parse(&format!("return {literal}")).unwrap();
+            let Some(LastStatement::Return(ret)) = block.get_last_statement() else {
+                panic!("expected return")
+            };
+            let Some(Expression::String(string)) = ret.iter_expressions().next() else {
+                panic!("expected byte string")
+            };
+            assert_eq!(string.get_value(), bytes);
+        }
+    }
 }
