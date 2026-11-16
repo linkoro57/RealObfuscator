@@ -131,7 +131,7 @@ valuable authoritative logic on the server.
 | `lightweight` (default) | Rename plus a shuffled, deduplicated string pool and eager cached decoding. |
 | `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch and decoy handlers. |
 | `vm` | Register-bytecode compilation for supported chunks/functions; captured-variable cells; randomized physical records, operand layouts and opcode aliases; constant fusion; incremental decoding and record integrity. Remaining compatible statement regions use conservative dispatch. |
-| `hardened` | Maximal VM settings with prototype-bound string constants and strict chunk/function/string coverage; uncovered runtime strings fail before output is replaced. |
+| `hardened` | Maximal VM settings with instruction-linked, prototype-bound strings and strict chunk/function/string coverage; uncovered runtime strings fail before output is replaced. |
 
 The register-bytecode backend supports main chunks and functions, captured-variable
 cells, shuffled instruction records, opcode aliases, fused operations, lazy
@@ -246,6 +246,10 @@ let config = ObfuscationConfig::default()
 
 The [architecture guide](docs/architecture.md) describes pass ordering, VM contracts,
 capture semantics and file publication invariants.
+
+Hardened also reconstructs bound literals through state-dependent instruction
+programs. This increases static reconstruction work and output/runtime cost; it
+does not guarantee secrecy. See [autonomous static hardening](docs/static-hardening.md).
 
 ## Verification
 

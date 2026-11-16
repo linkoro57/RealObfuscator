@@ -39,12 +39,32 @@ pub(super) fn runtime(
     );
     source = source.replace(
         "__STRING_DECODER__",
-        if config.vm_bind_strings {
+        if config.vm_literal_programs {
+            include_str!("literal_programs.luau")
+        } else if config.vm_bind_strings {
             include_str!("bound_strings.luau")
         } else {
             ""
         },
     );
+    for (op, placeholder) in [
+        (Op::LiteralStart, "__LITERAL_START__"),
+        (Op::LiteralXor, "__LITERAL_XOR__"),
+        (Op::LiteralAdd, "__LITERAL_ADD__"),
+        (Op::LiteralBytes, "__LITERAL_BYTES__"),
+        (Op::LiteralReturn, "__LITERAL_RETURN__"),
+    ] {
+        let test = codes
+            .get(&op)
+            .map(|ids| {
+                ids.iter()
+                    .map(|id| format!("op=={id}"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            })
+            .unwrap_or_else(|| "false".into());
+        source = source.replace(placeholder, &test);
+    }
     source = source.replace("__RUNNER__", runner);
     source = schema.apply(source);
     source = source.replace(
@@ -140,6 +160,7 @@ fn handler(op: &Op, nested_execution: bool, bind_strings: bool) -> String {
         Op::CellGet => "r[a]=r[b][1]",
         Op::CellSet => "r[a][1]=r[b]",
         Op::Closure => "local cells={};for i=1,#r[c] do local id=r[c][i];cells[id]=r[id]end;r[a]=external[b](cells)",
+        Op::LiteralStart | Op::LiteralXor | Op::LiteralAdd | Op::LiteralBytes | Op::LiteralReturn => "fail()",
         Op::Binary(operator) => return format!("r[a]=r[b]{operator}r[c]"),
         Op::BinaryConstant(operator) => return format!("{}r[a]=r[b]{operator}value", constant("c", bind_strings)),
         Op::Unary(operator) => return format!("r[a]={operator} r[b]"),

@@ -10,7 +10,7 @@ use darklua_core::{
     rules::{ContextBuilder, ConvertFunctionToAssign, FlawlessRule},
     Resources,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Default)]
 struct Loop {
@@ -35,6 +35,8 @@ pub(super) struct Program {
     pub native_bridges: usize,
     pub iteration_bridges: usize,
     pub closure_bridges: usize,
+    pub literal_entries: BTreeMap<u32, u32>,
+    pub literal_keys: BTreeMap<usize, u32>,
 }
 
 struct Compiler {
@@ -94,6 +96,8 @@ pub(super) fn compile(
         native_bridges: compiler.native_bridges,
         iteration_bridges: compiler.iteration_bridges,
         closure_bridges: compiler.closure_bridges,
+        literal_entries: BTreeMap::new(),
+        literal_keys: BTreeMap::new(),
     })
 }
 

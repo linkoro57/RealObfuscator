@@ -35,6 +35,11 @@ pub(super) enum Op {
     CellGet,
     CellSet,
     Closure,
+    LiteralStart,
+    LiteralXor,
+    LiteralAdd,
+    LiteralBytes,
+    LiteralReturn,
 }
 
 #[derive(Clone)]

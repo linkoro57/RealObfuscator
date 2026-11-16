@@ -24,6 +24,8 @@ pub struct ResultSet {
     pub vm_rejected: usize,
     pub bound_strings: usize,
     pub bound_rejected: usize,
+    pub recipe_strings: usize,
+    pub recipe_steps: usize,
     pub concatenations: usize,
 }
 
@@ -113,12 +115,13 @@ fn schema(functions: &Functions) -> Option<(Schema, Block)> {
             }
             impl NodeProcessor for Invocations<'_> {
                 fn process_function_expression(&mut self, f: &mut FunctionExpression) {
-                    if locals(f.get_block())
-                        .iter()
-                        .filter(|(_, e)| index_of(e, self.prototype).is_some())
-                        .count()
-                        == 4
-                    {
+                    if matches!(
+                        locals(f.get_block())
+                            .iter()
+                            .filter(|(_, e)| index_of(e, self.prototype).is_some())
+                            .count(),
+                        4 | 5
+                    ) {
                         self.blocks.push(f.get_block().clone());
                     }
                 }
@@ -135,9 +138,11 @@ fn schema(functions: &Functions) -> Option<(Schema, Block)> {
                 .iter()
                 .filter_map(|(_, e)| index_of(e, &params[0]))
                 .collect();
-            if fields.len() == 4 {
-                schema.constants = fields[2];
-                schema.entry = fields[3];
+            if fields.len() == 4 || fields.len() == 5 {
+                let extra = usize::from(fields.len() == 5);
+                schema.constants = fields[2 + extra];
+                schema.entry = fields[3 + extra];
+                schema.recipe_mask = if extra == 1 { fields[1] } else { 0 };
                 return Some((schema, body));
             }
         }
@@ -394,41 +399,84 @@ fn prototypes(value: &Value, schema: Schema, out: &mut Vec<Value>, seen: &mut BT
     }
 }
 
-fn records(prototype: &Value, schema: Schema) -> Option<Vec<[u32; 5]>> {
-    let table = prototype.table()?;
-    let count = table.get(&schema.count)?.uint()? as usize;
-    if count == 0 || count > 200_000 {
-        return None;
-    }
-    let layout = table.get(&schema.layout)?.table()?;
-    let slots: Vec<_> = (1..=5)
-        .map(|i| layout.get(&i)?.uint())
-        .collect::<Option<_>>()?;
-    if slots.iter().copied().collect::<BTreeSet<_>>() != BTreeSet::from([1, 5, 9, 13, 17]) {
-        return None;
-    }
-    let seed = table.get(&schema.seed)?.uint()? ^ table.get(&schema.salt)?.uint()?;
-    let step = table.get(&schema.step)?.uint()?;
-    let payload = table.get(&schema.payload)?;
-    let packed = matches!(payload, Value::String(_));
-    let all = if packed { payload.bytes()? } else { Vec::new() };
-    let offsets = table.get(&schema.offsets)?.table()?;
-    let mut result = vec![[0; 5]; count + 1];
-    for (index, record) in result.iter_mut().enumerate().skip(1) {
-        let cipher = if packed {
-            let first = offsets.get(&(index as u32))?.uint()?.checked_sub(1)? as usize;
-            let last = offsets.get(&(index as u32 + 1))?.uint()?.checked_sub(1)? as usize;
-            if last < first || last - first > 25 {
-                return None;
+pub(super) struct RecordReader<'a> {
+    count: usize,
+    slots: [usize; 5],
+    seed: u32,
+    step: u32,
+    payload: &'a Value,
+    offsets: &'a BTreeMap<u32, Value>,
+    mask: Option<Vec<u8>>,
+}
+impl<'a> RecordReader<'a> {
+    pub(super) fn new(prototype: &'a Value, schema: Schema) -> Option<Self> {
+        let table = prototype.table()?;
+        let count = table.get(&schema.count)?.uint()? as usize;
+        if count == 0 || count > 200_000 {
+            return None;
+        }
+        let layout = table.get(&schema.layout)?.table()?;
+        let slots: Vec<_> = (1..=5)
+            .map(|i| layout.get(&i)?.uint())
+            .collect::<Option<_>>()?;
+        if slots.iter().copied().collect::<BTreeSet<_>>() != BTreeSet::from([1, 5, 9, 13, 17]) {
+            return None;
+        }
+        let mask = match table.get(&schema.recipe_mask) {
+            Some(Value::Nil) | None => None,
+            Some(value) => {
+                let bytes = value.bytes()?;
+                if bytes.len() != count.div_ceil(8) {
+                    return None;
+                }
+                Some(bytes)
             }
-            all.get(first..last)?.to_vec()
-        } else {
-            payload.table()?.get(&(index as u32))?.bytes()?
+        };
+        Some(Self {
+            count,
+            slots: slots
+                .into_iter()
+                .map(|i| i as usize - 1)
+                .collect::<Vec<_>>()
+                .try_into()
+                .ok()?,
+            seed: table.get(&schema.seed)?.uint()? ^ table.get(&schema.salt)?.uint()?,
+            step: table.get(&schema.step)?.uint()?,
+            payload: table.get(&schema.payload)?,
+            offsets: table.get(&schema.offsets)?.table()?,
+            mask,
+        })
+    }
+    pub(super) fn keyed(&self, index: usize) -> bool {
+        index > 0
+            && self.mask.as_ref().is_some_and(|m| {
+                m.get((index - 1) / 8)
+                    .is_some_and(|b| b & (1 << ((index - 1) % 8)) != 0)
+            })
+    }
+    pub(super) fn read(&self, index: usize, carry: u32) -> Option<[u32; 5]> {
+        if index == 0 || index > self.count {
+            return None;
+        }
+        let cipher = match self.payload {
+            Value::String(all) => {
+                let first = self.offsets.get(&(index as u32))?.uint()?.checked_sub(1)? as usize;
+                let last = self
+                    .offsets
+                    .get(&(index as u32 + 1))?
+                    .uint()?
+                    .checked_sub(1)? as usize;
+                if last < first || last - first > 25 {
+                    return None;
+                }
+                all.get(first..last)?.to_vec()
+            }
+            other => other.table()?.get(&(index as u32))?.bytes()?,
         };
         if cipher.is_empty() || cipher.len() > 25 {
             return None;
         }
-        let raw = data::invert(&cipher, seed ^ index as u32, step);
+        let raw = data::invert(&cipher, self.seed ^ index as u32 ^ carry, self.step);
         let mut bytes = Vec::new();
         match raw[0] {
             0 => bytes.extend_from_slice(&raw[1..]),
@@ -466,11 +514,19 @@ fn records(prototype: &Value, schema: Schema) -> Option<Vec<[u32; 5]>> {
         if hash != word(20) {
             return None;
         }
-        for (slot, value) in slots.iter().zip(record.iter_mut()) {
-            *value = word(*slot as usize - 1);
-        }
-        if record[4] > count as u32 {
+        let record = self.slots.map(word);
+        if record[4] > self.count as u32 {
             return None;
+        }
+        Some(record)
+    }
+}
+pub(super) fn records(prototype: &Value, schema: Schema) -> Option<Vec<[u32; 5]>> {
+    let reader = RecordReader::new(prototype, schema)?;
+    let mut result = vec![[0; 5]; reader.count + 1];
+    for (index, record) in result.iter_mut().enumerate().skip(1) {
+        if !reader.keyed(index) {
+            *record = reader.read(index, 0)?;
         }
     }
     Some(result)
@@ -497,6 +553,9 @@ fn inspect(prototype: &Value, ctx: &Context, handlers: &Handlers, result: &mut R
             if let Some(Value::String(bytes)) = ctx.factory(factory, prototype, id) {
                 if bound {
                     result.bound_strings += 1;
+                    if ctx.is_recipe_factory(factory) {
+                        result.recipe_strings += 1;
+                    }
                 }
                 result.values.insert(bytes.clone());
                 constants.insert(id, bytes);
@@ -570,6 +629,9 @@ pub fn extract_adapted(source: &str) -> Result<ResultSet, Box<dyn Error>> {
         let mut functions = Functions::default();
         DefaultVisitor::visit_block(&mut block, &mut functions);
         let mut ctx = setup(&block, &functions, &result);
+        let mut recipe_handlers = super::recipes::Handlers::default();
+        DefaultVisitor::visit_block(&mut block, &mut recipe_handlers);
+        ctx.recipe_handlers = recipe_handlers.0;
         let runtime = schema(&functions);
         ctx.schema = runtime.as_ref().map(|(s, _)| *s);
         Post::visit_block(
@@ -615,6 +677,7 @@ pub fn extract_adapted(source: &str) -> Result<ResultSet, Box<dyn Error>> {
                 inspect(&prototype, &ctx, &handlers, &mut result);
             }
         }
+        result.recipe_steps = ctx.recipe_steps.get();
         Ok(result)
     })
 }
@@ -684,6 +747,7 @@ mod tests {
                 config.vm_predecode_bytecode = true;
                 config.encrypt_strings = outer;
                 config.vm_bind_strings = bound;
+                config.vm_literal_programs = bound;
                 config.require_bound_strings = bound;
                 let source="return 'a sufficiently long literal whose fragments must be assembled in register order'";
                 let artifact = Obfuscator::new(config).obfuscate(source).unwrap();
@@ -737,7 +801,9 @@ mod tests {
                 }
             }
         }
-        let artifact = Obfuscator::new(ObfuscationConfig::hardened().with_seed(42))
+        let mut legacy = ObfuscationConfig::hardened().with_seed(42);
+        legacy.vm_literal_programs = false;
+        let artifact = Obfuscator::new(legacy)
             .obfuscate(
                 "return 'a long literal to check independent reconstruction checksum rejection'",
             )
@@ -785,7 +851,9 @@ mod tests {
         let mut generator = DenseLuaGenerator::default();
         generator.write_block(&block);
         let result = extract_adapted(&generator.into_string()).unwrap();
-        assert!(result.vm_rejected > 0);
+        // A keyed recipe record is validated only while that recipe is followed;
+        // its corruption belongs to bound rejection rather than the keyless pass.
+        assert!(result.vm_rejected + result.bound_rejected > 0);
     }
 
     #[test]

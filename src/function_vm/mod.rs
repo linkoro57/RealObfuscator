@@ -6,6 +6,7 @@ mod bridge;
 mod compiler;
 mod encoding;
 mod instruction;
+mod literal_programs;
 mod literals;
 mod runtime;
 mod scatter;
@@ -194,6 +195,24 @@ impl<'a> FunctionVm<'a> {
                 &self.decoder,
                 &self.schema,
             );
+        }
+        if self.config.vm_literal_programs {
+            match literal_programs::prepare(&mut program, &mut self.names.rng) {
+                Ok(count) => self.report.vm_literal_instructions += count,
+                Err(reason) => {
+                    if chunk {
+                        self.report.vm_chunk_fallback = Some(reason.into());
+                    } else {
+                        self.report.vm_native_functions += 1;
+                        *self
+                            .report
+                            .vm_fallback_reasons
+                            .entry(reason.into())
+                            .or_default() += 1;
+                    }
+                    return None;
+                }
+            }
         }
         let external = program.external.join(",");
         let bridged_iteration = program

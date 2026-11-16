@@ -38,6 +38,8 @@ Options:
       --vm-unpacked         Use table VM payloads
       --vm-bound-strings    Bind compiled string constants to their VM prototype
       --vm-unbound-strings  Use the legacy shared-pool string protection
+      --vm-literal-programs Reconstruct bound strings through VM instruction recipes
+      --no-vm-literal-programs Use the older prototype-bound literal payloads
       --require-bound-strings Reject runtime strings outside bound VM constants
   -q, --quiet               Show errors only
   -h, --help                Print help
@@ -90,6 +92,7 @@ struct Args {
     require_chunk_vm: bool,
     functions_only: bool,
     bind_strings: Option<bool>,
+    literal_programs: Option<bool>,
     require_bound_strings: bool,
     split_strings: Option<bool>,
     scatter: Option<bool>,
@@ -148,6 +151,8 @@ fn parse() -> Args {
             "--require-chunk-vm" => args.require_chunk_vm = true,
             "--vm-functions-only" => args.functions_only = true,
             "--vm-bound-strings" => args.bind_strings = Some(true),
+            "--vm-literal-programs" => args.literal_programs = Some(true),
+            "--no-vm-literal-programs" => args.literal_programs = Some(false),
             "--vm-unbound-strings" => args.bind_strings = Some(false),
             "--require-bound-strings" => args.require_bound_strings = true,
             "--decode" => args.decode = Some(value(&mut it, &option)),
@@ -281,6 +286,9 @@ fn config(args: &Args) -> ObfuscationConfig {
     if let Some(bound) = args.bind_strings {
         config.vm_bind_strings = bound;
     }
+    if let Some(programs) = args.literal_programs {
+        config.vm_literal_programs = programs;
+    }
     if args.require_bound_strings {
         if args.bind_strings == Some(false) {
             usage("--require-bound-strings conflicts with --vm-unbound-strings")
@@ -354,6 +362,10 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
                     report.split_strings, report.vm_scattered_tables, report.vm_scattered_entries
                 );
                 if obfuscator.config.vm_bind_strings {
+                    println!(
+                        "  literal recipe instructions: {}",
+                        report.vm_literal_instructions
+                    );
                     println!(
                         "  VM bound strings: {}; unbound runtime string references: {}",
                         report.vm_bound_strings, report.vm_unbound_string_references

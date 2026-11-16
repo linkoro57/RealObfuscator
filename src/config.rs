@@ -123,6 +123,8 @@ pub struct ObfuscationConfig {
     pub vm_scatter_data: bool,
     /// Bind compiled string literals to their prototype's encoding context.
     pub vm_bind_strings: bool,
+    /// Reconstruct bound literals through shuffled VM instruction recipes.
+    pub vm_literal_programs: bool,
     /// Reject runtime string references left outside compiled VM constants.
     pub require_bound_strings: bool,
     pub require_function_vm: bool,
@@ -171,6 +173,7 @@ impl Default for ObfuscationConfig {
             virtualize_chunk: true,
             vm_scatter_data: false,
             vm_bind_strings: false,
+            vm_literal_programs: false,
             require_bound_strings: false,
             require_function_vm: false,
             require_chunk_vm: false,
@@ -203,6 +206,7 @@ impl ObfuscationConfig {
     pub fn hardened() -> Self {
         let mut config = Self::default().with_level(ProtectionLevel::Paranoid);
         config.vm_bind_strings = true;
+        config.vm_literal_programs = true;
         config.require_bound_strings = true;
         config.require_function_vm = true;
         config.require_chunk_vm = true;
@@ -263,6 +267,9 @@ impl ObfuscationConfig {
         }
         if self.vm_bind_strings && !self.virtualize {
             return Err("vm_bind_strings requires VM mode".into());
+        }
+        if self.vm_literal_programs && (!self.vm_bind_strings || !self.anti_tamper) {
+            return Err("vm_literal_programs requires bound strings and integrity checks".into());
         }
         if self.require_bound_strings && (!self.vm_bind_strings || !self.virtualize_chunk) {
             return Err(

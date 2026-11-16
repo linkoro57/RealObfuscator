@@ -870,6 +870,7 @@ fn corrupt_bound_literals() {
     struct CorruptBound {
         changed: bool,
         index: bool,
+        programs: bool,
     }
     impl NodeProcessor for CorruptBound {
         fn process_function_expression(&mut self, function: &mut FunctionExpression) {
@@ -886,11 +887,20 @@ fn corrupt_bound_literals() {
             let Arguments::Tuple(args) = call.mutate_arguments() else {
                 return;
             };
-            if args.iter_values().count() != 4 {
+            if args.iter_values().count() != if self.programs { 3 } else { 4 } {
                 return;
             }
-            if self.index {
-                if let Some(argument) = args.iter_mut_values().nth(2) {
+            if self.index || self.programs {
+                let slot = if self.programs {
+                    if self.index {
+                        1
+                    } else {
+                        2
+                    }
+                } else {
+                    2
+                };
+                if let Some(argument) = args.iter_mut_values().nth(slot) {
                     *argument =
                         BinaryExpression::new(BinaryOperator::Plus, argument.clone(), 1.0).into();
                     self.changed = true;
@@ -907,29 +917,33 @@ fn corrupt_bound_literals() {
     }
     let Some(runtime) = runtime() else { return };
     let workspace = Workspace::new();
-    for cached in [false, true] {
-        for index in [false, true] {
-            let mut config = ObfuscationConfig::hardened().with_seed(7);
-            // Expose the inner ciphertext to this targeted corruption probe.
-            config.encrypt_strings = false;
-            config.vm_predecode_bytecode = cached;
-            let output=Obfuscator::new(config).obfuscate("local function f()return 'only after successful bound decoding' end;print(f())").unwrap();
-            let path = workspace.0.join(format!("bound-{cached}-{index}.luau"));
-            fs::write(&path, &output).unwrap();
-            assert!(run(&runtime, &path).status.success());
-            let mut block = darklua_core::Parser::default().parse(&output).unwrap();
-            let mut corrupt = CorruptBound {
-                changed: false,
-                index,
-            };
-            DefaultVisitor::visit_block(&mut block, &mut corrupt);
-            assert!(corrupt.changed);
-            let mut generator = DenseLuaGenerator::default();
-            generator.write_block(&block);
-            fs::write(&path, generator.into_string()).unwrap();
-            let result = run(&runtime, &path);
-            assert!(!result.status.success());
-            assert!(result.stdout.is_empty());
+    for programs in [false, true] {
+        for cached in [false, true] {
+            for index in [false, true] {
+                let mut config = ObfuscationConfig::hardened().with_seed(7);
+                // Expose the inner ciphertext to this targeted corruption probe.
+                config.vm_literal_programs = programs;
+                config.encrypt_strings = false;
+                config.vm_predecode_bytecode = cached;
+                let output=Obfuscator::new(config).obfuscate("local function f()return 'only after successful bound decoding' end;print(f())").unwrap();
+                let path = workspace.0.join(format!("bound-{cached}-{index}.luau"));
+                fs::write(&path, &output).unwrap();
+                assert!(run(&runtime, &path).status.success());
+                let mut block = darklua_core::Parser::default().parse(&output).unwrap();
+                let mut corrupt = CorruptBound {
+                    changed: false,
+                    index,
+                    programs,
+                };
+                DefaultVisitor::visit_block(&mut block, &mut corrupt);
+                assert!(corrupt.changed);
+                let mut generator = DenseLuaGenerator::default();
+                generator.write_block(&block);
+                fs::write(&path, generator.into_string()).unwrap();
+                let result = run(&runtime, &path);
+                assert!(!result.status.success());
+                assert!(result.stdout.is_empty());
+            }
         }
     }
 }

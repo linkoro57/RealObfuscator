@@ -3,13 +3,17 @@
     for i=1,parameterCount do r[i]=selectCount(i,...) end
     local varargs = if not variadic or selectCount("#",...)<=parameterCount then emptyVarargs else packValues(selectCount(parameterCount+1,...))
     local records = prototype[__RECORDS__]
+    local recipeMask = prototype[__RECIPE_MASK__]
     local decode
     if __CACHED__ then
         if records == nil then
             local initialize=newDecoder(prototype)
             local count=prototype[__INSTRUCTION_COUNT__]
             records=createTable(count)
-            for i=1,count do records[i]={initialize(i)} end
+            for i=1,count do
+                local bit=(i-1)%8
+                if recipeMask==nil or andValue(byteValue(recipeMask,(i-1-bit)/8+1) or 0,2^bit)==0 then records[i]={initialize(i)} end
+            end
             prototype[__RECORDS__]=records
         end
     else

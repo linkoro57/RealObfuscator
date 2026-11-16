@@ -39,6 +39,14 @@ Runtime fixtures execute from their own resolved directory. This avoids Luau's
 standalone `require` context errors with Windows 8.3 temporary paths and a checkout
 on a different drive, including hosted Windows runners.
 
+`tests/static_hardening.rs` exercises all 256 byte values, empty/partial words,
+native bridge literals and repeated access through state-dependent literal
+recipes, across eight seed/packing/cache combinations. Bound-string corruption
+tests cover both legacy payloads and recipe factory indices/entry points. The
+independent audit recognizes recipe operations and verifies their state-dependent
+wire records before reconstructing plaintext; extraction failure is not accepted
+as evidence of confidentiality.
+
 The profile matrix includes main-chunk compilation, functions-only mode, preserved types, disabled renaming, disabled integrity checks and cache/payload variants. A module-driver test loads original and protected files through Luau `require` and checks returned object identity, method results and shared state after module initialization.
 
 Method-argument callbacks are checked with strict chunk/function coverage to prevent a native fallback from hiding a regression. Cases include callbacks inside table arguments, loop-local capture retention, shared writes, local/parameter/implicit-self shadowing, nested returned closures, argument-side method replacement, nil holes and yielding callbacks. The unrenamed profile explicitly enables the legacy arithmetic predicates so their optional path remains covered. CLI checks verify that native fallback warnings appear without `--stats` and respect `--quiet`.

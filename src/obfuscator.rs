@@ -53,6 +53,7 @@ pub struct ObfuscationReport {
     pub vm_iteration_bridges: usize,
     pub vm_closure_bridges: usize,
     pub vm_bound_strings: usize,
+    pub vm_literal_instructions: usize,
     pub vm_unbound_string_references: usize,
     pub vm_fallback_reasons: BTreeMap<String, usize>,
 }

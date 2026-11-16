@@ -1,5 +1,11 @@
 # Prototype-bound string hardening
 
+The current Hardened default adds instruction-linked literal programs. See
+[autonomous static hardening](static-hardening.md) for their state-dependent
+encoding, configuration and costs. The envelope format described below remains
+available with `--no-vm-literal-programs`; its older cost measurements do not
+measure the new recipe mode.
+
 No mode guarantees that automatic deobfuscation is impossible. Client-side code,
 keys, handlers and decoded values remain available to an analyst controlling the
 runtime. OWASP describes obfuscation as raising reverse-engineering cost rather

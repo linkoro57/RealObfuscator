@@ -44,6 +44,7 @@ test('real WASM engine, exact seed, stats and download across every preset', asy
   expect(report.report.vm_chunks).toBe(1);
   expect(report.report.vm_functions).toBe(1);
   expect(report.report.vm_bound_strings).toBeGreaterThan(0);
+  expect(report.report.vm_literal_instructions).toBeGreaterThan(0);
   expect(report.warnings).toEqual([]);
   expect(external).toEqual([]);
   expect(errors).toEqual([]);
@@ -58,6 +59,21 @@ test('real WASM engine, exact seed, stats and download across every preset', asy
       expect(run.status).toBe(0); expect(run.stdout.trim()).toBe('19\thello');
     }
   }
+});
+
+test('Hardened literal programs are enabled by default and can be disabled explicitly', async ({ page }) => {
+  await page.locator('#preset').selectOption('hardened');
+  await page.locator('#open-options').click();
+  await expect(page.locator('#option-vm_literal_programs')).toBeChecked();
+  await page.locator('#option-vm_literal_programs').uncheck();
+  await page.keyboard.press('Escape');
+  await page.locator('#obfuscate').click();
+  await expect(page.locator('#run-state')).toHaveText('Done');
+  const pending = page.waitForEvent('download');
+  await page.locator('#download-report').click();
+  const report = JSON.parse(readFileSync(await (await pending).path(), 'utf8'));
+  expect(report.report.vm_literal_instructions).toBe(0);
+  expect(report.report.vm_bound_strings).toBeGreaterThan(0);
 });
 
 test('syntax errors, invalid combinations and stale result handling', async ({ page }) => {

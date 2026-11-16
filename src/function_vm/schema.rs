@@ -15,11 +15,12 @@ pub(super) enum Field {
     ConstantKnown,
     Records,
     Offsets,
+    RecipeMask,
 }
 
 impl Field {
     pub const COUNT: usize = Self::ALL.len();
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Payload,
         Self::Seed,
         Self::Step,
@@ -32,6 +33,7 @@ impl Field {
         Self::ConstantKnown,
         Self::Records,
         Self::Offsets,
+        Self::RecipeMask,
     ];
 
     pub fn placeholder(self) -> &'static str {
@@ -48,6 +50,7 @@ impl Field {
             Self::ConstantKnown => "__CONSTANT_KNOWN__",
             Self::Records => "__RECORDS__",
             Self::Offsets => "__OFFSETS__",
+            Self::RecipeMask => "__RECIPE_MASK__",
         }
     }
 }

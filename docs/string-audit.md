@@ -7,6 +7,47 @@ is still optional and is read only after extraction to measure exact byte covera
 
 ## Adapted extraction, 2026-11-16
 
+### Current instruction-linked literal programs
+
+The current Hardened preset replaces standalone bound payloads with
+[instruction-linked literal programs](static-hardening.md). The independent audit
+now infers their operation tags, follows their shuffled record links, calculates
+the evolving state needed to decode each successive record, and validates output
+positions, lengths and checksums. It neither executes Luau nor reads the original
+source until after extraction.
+
+An ablation comparison uses the same 9,158-byte / 49-literal corpus described
+below, seed 42, current code and the same adapted release audit in both rows:
+
+| Hardened setting | Artifact bytes | Recipe instructions added | Recipes reconstructed | Original literals recovered | Median read / parse / reconstruct |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `--no-vm-literal-programs` | 688,278 | 0 | 0 | **49 / 49** | 1,409.097 ms |
+| Default instruction-linked mode | 1,063,011 | 1,098 | 113 | **49 / 49** | 1,789.298 ms |
+
+Windows, five alternating fresh audit processes per row. Other regression tests
+were running on the machine: these are diagnostic extraction measurements, not
+controlled performance benchmarks or analyst discovery times. Both artifacts have
+10 prototypes and 113 bound literal entries; their VM streams contain 1,533 and
+2,631 instructions respectively. The new audit performed 1,187 recipe steps,
+including repeated factory references, and all rejection counters were zero.
+
+The frozen prior extractor does not support the new recipe/factory/descriptor
+format. Its reduced coverage must not be reported as confidentiality or evidence
+of "almost impossible" deobfuscation. The adapted interpreter still recovers all
+49 original constants. The implemented gain is an additional state-dependent
+reconstruction stage, accompanied by larger output and more work; it does not
+prevent automated source-informed extraction.
+
+SHA-256 evidence:
+
+- Current legacy-bound artifact: `12a7815236ac5e26b3d7aafe14cda88ea634352071dd3b74ee0a4a6459a28178`.
+- Instruction-linked artifact: `eaa776be823be55a448263bfa4d2f9cb3e66029a707a2a1cecbd5c008fe5eeb6`.
+
+Raw results remain in ignored `target/static-hardening-after/comparison.json`.
+The historical measurements below refer to their stated revisions and formats.
+
+### Prior scattered and prototype-bound format
+
 The original 22,643-byte source and its two historical artifacts were not available
 for this rerun. With the user's agreement, the replacement corpus is the neighboring
 `UniversalSynSaveInstance/Tools/NotScriptable-Related/NotScriptable Proxy Dumper/NotScriptable Proxy Dumper.luau`:

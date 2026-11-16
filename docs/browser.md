@@ -69,6 +69,12 @@ use an existing Edge installation if present. When the local official Luau test
 interpreter is available, the browser-generated hardened script is also executed
 and its output checked. It is not executed by the website.
 
+Hardened enables instruction-linked literal reconstruction by default, with an
+explicit advanced-setting opt-out. Its JSON report includes
+`vm_literal_instructions`. Browser tests check both settings using the actual
+Wasm engine and execute generated binary-literal output in the official Luau CLI
+when the interpreter is installed.
+
 ## Publish
 
 `.github/workflows/pages.yml` runs on pushes to `main`, pull requests and manual

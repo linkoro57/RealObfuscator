@@ -38,6 +38,7 @@ when emitting output or allocating random identifiers.
 | `compiler.rs` | AST lowering and logical register instructions |
 | `bridge.rs` | Native protocol bridges and scope-aware captured-cell rewriting |
 | `instruction.rs` | Logical instruction vocabulary |
+| `literal_programs.rs` / `literal_programs.luau` | Shuffled literal recipes and state-dependent record decoding |
 | `encoding.rs` | Physical placement, branch relocation, compression and record encoding |
 | `schema.rs` | Named descriptor fields and their randomized Luau table slots |
 | `runtime.rs` / `runtime.luau` / `invocation.luau` | Interpreter factory and invocation generation |
@@ -64,6 +65,14 @@ instruction offsets until serialization. Physical record positions are one-based
 with zero reserved for termination. A record has five 32-bit little-endian words
 and a four-byte checksum. Physical layout, relocation and encoding must agree with
 the interpreter; runtime-equivalence and corruption tests cover that contract.
+
+Literal recipes append unreachable-from-main records after the compiler's final
+return. Each factory points to a relocated recipe entry. The writer latches the
+state before each recipe transition into that record's encoding key; the runtime
+supplies the same state to `newDecoder`. A descriptor bitmask marks these records
+so the optional eager instruction cache skips them. The independent audit decodes
+them lazily with its own bounded interpreter rather than treating them as corrupt
+keyless records. The mask identifies record roles; it is not secret key material.
 
 `schema::Field` names descriptor fields on the serialization side and template
 placeholders on the interpreter side. Add or change fields in that contract before

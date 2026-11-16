@@ -19,6 +19,7 @@ export const groups = [
     select('vm_hardening', 'VM diversification', [['basic', 'Basic'], ['client-max', 'Client max'], ['max', 'Max']]),
     toggle('vm_scatter_data', 'Scatter VM tables', 'Increases output size and load cost.'),
     toggle('vm_bind_strings', 'Bind strings to prototypes'),
+    toggle('vm_literal_programs', 'Reconstruct strings through VM instructions', 'Replaces standalone literal payloads with stateful, shuffled recipes. Requires bound strings and integrity checks; increases size and runtime cost.'),
     toggle('vm_pack_bytecode', 'Pack bytecode'),
     toggle('vm_pack_constants', 'Pack constants'),
     toggle('vm_predecode_bytecode', 'Cache decoded instructions', 'Faster execution with a retained plaintext instruction cache.'),
@@ -53,7 +54,7 @@ export const descriptions = {
   lightweight: 'Local renaming and string encoding with low overhead.',
   native: 'Split strings, transformed integers and flattened control flow.',
   vm: 'Private bytecode compilation and diversification. Higher size and runtime overhead.',
-  hardened: 'Maximum VM settings, bound strings and strict coverage. Unsupported constructs are rejected.',
+  hardened: 'Maximum VM settings, instruction-linked strings and strict coverage. Higher size and execution cost; unsupported constructs are rejected.',
 };
 export function defaults(preset) {
   const native = ['native', 'vm', 'hardened'].includes(preset);
@@ -64,7 +65,7 @@ export function defaults(preset) {
     cache_strings: !vm, obfuscate_numbers: native, control_flow_flatten: native,
     opaque_predicates: false, inject_dead_code: native, table_indirection: native,
     anti_tamper: native, virtualize: vm, virtualize_chunk: true, vm_scatter_data: vm,
-    vm_bind_strings: hardened, require_bound_strings: hardened, require_function_vm: hardened,
+    vm_bind_strings: hardened, vm_literal_programs: hardened, require_bound_strings: hardened, require_function_vm: hardened,
     require_chunk_vm: hardened, name_min_length: 8, name_max_length: 14,
     string_decode_mode: native ? 'lazy' : 'eager', mba_depth: 2, skip_trivial_numbers: true,
     min_blocks_for_cff: 3, dead_code_density: 'medium', fake_function_count: 5,

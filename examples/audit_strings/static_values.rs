@@ -1,6 +1,7 @@
 //! A deliberately small, non-executing evaluator for generated data expressions.
 use darklua_core::nodes::*;
 use std::{
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
@@ -59,6 +60,7 @@ pub struct Schema {
     pub step: u32,
     pub entry: u32,
     pub constants: u32,
+    pub recipe_mask: u32,
 }
 
 #[derive(Default)]
@@ -67,7 +69,13 @@ pub struct Context {
     pub decoders: BTreeMap<String, BTreeMap<u32, Vec<u8>>>,
     pub rebuilders: BTreeSet<String>,
     pub schema: Option<Schema>,
+    pub recipe_handlers: BTreeMap<u32, super::recipes::Kind>,
+    pub recipe_records: RefCell<RecordCache>,
+    pub recipe_steps: Cell<usize>,
 }
+
+// Keep the owning table alive so its pointer cannot be reused by another graph.
+type RecordCache = BTreeMap<usize, (Value, Rc<Vec<[u32; 5]>>)>;
 
 pub fn args(call: &FunctionCall) -> Option<Vec<&Expression>> {
     if call.get_method().is_some() {
@@ -233,6 +241,15 @@ impl Context {
             _ => None,
         }
     }
+    pub fn is_recipe_factory(&self, factory: &FunctionExpression) -> bool {
+        if let Some(LastStatement::Return(ret)) = factory.get_block().get_last_statement() {
+            if let Some(Expression::Call(call)) = ret.iter_expressions().next() {
+                return args(call).is_some_and(|a| a.len() == 3)
+                    && factory.iter_parameters().count() == 3;
+            }
+        }
+        false
+    }
     pub fn factory(
         &self,
         factory: &FunctionExpression,
@@ -260,6 +277,16 @@ impl Context {
             return None;
         };
         let args = args(call)?;
+        if params.len() == 3
+            && args.len() == 3
+            && name(call.get_prefix()) == Some(params[0])
+            && matches!(args[0],Expression::Identifier(id) if id.get_name()==params[1])
+            && matches!(args[1],Expression::Identifier(id) if id.get_name()==params[2])
+        {
+            let entry = self.eval(args[2])?.uint()?;
+            return super::recipes::decode(self, prototype, self.schema?, index, entry)
+                .map(Value::String);
+        }
         if params.len() != 3 || args.len() != 4 || name(call.get_prefix()) != Some(params[0]) {
             return None;
         }

@@ -48,6 +48,10 @@ pub(super) fn descriptor(
             positions[logical + 1],
         ];
         match instruction.op {
+            Op::LiteralStart => {
+                words[1] ^=
+                    seed ^ multiplier ^ instruction.b.wrapping_mul(65599) ^ positions[logical];
+            }
             Op::Jump => words[1] = positions[instruction.a as usize],
             Op::JumpFalse | Op::JumpTrue => words[2] = positions[instruction.b as usize],
             Op::GenericFor => {
@@ -73,8 +77,13 @@ pub(super) fn descriptor(
             serialized.push(0);
             serialized.extend_from_slice(&record);
         }
-        let serialized =
-            crate::codec::encode(&serialized, seed ^ (physical as u32 + 1), step, multiplier);
+        let carry = program.literal_keys.get(&logical).copied().unwrap_or(0);
+        let serialized = crate::codec::encode(
+            &serialized,
+            seed ^ (physical as u32 + 1) ^ carry,
+            step,
+            multiplier,
+        );
         offsets.push(((payload_length + 1) as f64).into());
         payload_length += serialized.len();
         if packed {
@@ -94,6 +103,21 @@ pub(super) fn descriptor(
     let constants = array(program.constants.iter().enumerate().map(|(index, value)| {
         let value = if bind_strings {
             if let Expression::String(string) = value {
+                if let Some(&entry) = program.literal_entries.get(&(index as u32 + 1)) {
+                    use darklua_core::nodes::{FunctionCall, TypedIdentifier};
+                    let call = FunctionCall::from_name("decode")
+                        .with_argument(Expression::identifier("context"))
+                        .with_argument(Expression::identifier("index"))
+                        .with_argument(positions[entry as usize] as f64);
+                    return FunctionExpression::new(
+                        Block::from(ReturnStatement::one(call)),
+                        ["decode", "context", "index"]
+                            .map(TypedIdentifier::new)
+                            .into(),
+                        false,
+                    )
+                    .into();
+                }
                 return bound_string(
                     string.get_value(),
                     index as u32 + 1,
@@ -109,6 +133,16 @@ pub(super) fn descriptor(
         };
         FunctionExpression::from_block(Block::from(ReturnStatement::one(value))).into()
     }));
+    let recipe_mask = if program.literal_keys.is_empty() {
+        Expression::nil()
+    } else {
+        let mut mask = vec![0u8; count.div_ceil(8)];
+        for &logical in program.literal_keys.keys() {
+            let position = positions[logical] as usize - 1;
+            mask[position / 8] |= 1 << (position % 8);
+        }
+        StringExpression::from_value(mask).into()
+    };
     [
         (Field::Payload, payload),
         (Field::Seed, (seed as f64).into()),
@@ -125,6 +159,7 @@ pub(super) fn descriptor(
         (Field::ConstantKnown, TableExpression::default().into()),
         (Field::Records, Expression::nil()),
         (Field::Offsets, array(offsets)),
+        (Field::RecipeMask, recipe_mask),
     ]
 }
 

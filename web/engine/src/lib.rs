@@ -22,6 +22,7 @@ pub struct Settings {
     virtualize_chunk: Option<bool>,
     vm_scatter_data: Option<bool>,
     vm_bind_strings: Option<bool>,
+    vm_literal_programs: Option<bool>,
     require_bound_strings: Option<bool>,
     require_function_vm: Option<bool>,
     require_chunk_vm: Option<bool>,
@@ -81,6 +82,7 @@ impl Settings {
             virtualize_chunk,
             vm_scatter_data,
             vm_bind_strings,
+            vm_literal_programs,
             require_bound_strings,
             require_function_vm,
             require_chunk_vm,
@@ -152,6 +154,7 @@ pub fn run(source: &str, json: &str) -> Result<String, String> {
         "vm_native_functions":r.vm_native_functions,"vm_native_bridges":r.vm_native_bridges,
         "vm_iteration_bridges":r.vm_iteration_bridges,"vm_closure_bridges":r.vm_closure_bridges,
         "vm_bound_strings":r.vm_bound_strings,"vm_unbound_string_references":r.vm_unbound_string_references,
+        "vm_literal_instructions":r.vm_literal_instructions,
         "vm_scattered_tables":r.vm_scattered_tables,"vm_scattered_entries":r.vm_scattered_entries,
         "vm_chunk_fallback":r.vm_chunk_fallback,"vm_fallback_reasons":r.vm_fallback_reasons
     });
