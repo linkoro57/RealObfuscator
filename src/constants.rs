@@ -10,6 +10,57 @@ use darklua_core::{
 };
 use std::collections::HashMap;
 
+/// Work on source bytes, before VM compilation and literal encoding. Concatenation
+/// has no user operands, so it cannot invoke user metamethods or reorder effects.
+pub(crate) struct SplitStrings<'a> {
+    pub rng: &'a mut crate::rng::Rng,
+    pub count: usize,
+}
+
+impl NodeProcessor for SplitStrings<'_> {
+    fn process_function_call(&mut self, call: &mut FunctionCall) {
+        if let Arguments::String(string) = call.mutate_arguments() {
+            *call.mutate_arguments() = TupleArguments::new(vec![string.clone().into()]).into();
+        }
+    }
+}
+
+impl NodePostProcessor for SplitStrings<'_> {
+    fn process_after_expression(&mut self, expression: &mut Expression) {
+        let Expression::String(string) = expression else {
+            return;
+        };
+        let bytes = string.get_value();
+        if bytes.len() < 32 {
+            return;
+        }
+        let pieces = self.rng.range(2, 9).min((bytes.len() / 8) as u64) as usize;
+        let mut cuts: Vec<_> = (1..pieces)
+            .map(|i| {
+                let start = i * bytes.len() / pieces;
+                let width = (bytes.len() / pieces / 2).max(1);
+                start + self.rng.range(0, width as u64) as usize
+            })
+            .collect();
+        cuts.push(bytes.len());
+        let mut start = 0;
+        let mut result: Option<Expression> = None;
+        for end in cuts {
+            let fragment: Expression =
+                StringExpression::from_value(bytes[start..end].to_vec()).into();
+            result = Some(match result {
+                None => fragment,
+                Some(previous) => {
+                    BinaryExpression::new(BinaryOperator::Concat, previous, fragment).into()
+                }
+            });
+            start = end;
+        }
+        *expression = result.expect("at least two fragments");
+        self.count += 1;
+    }
+}
+
 /// Convert property reads/writes and named table keys without touching method calls.
 /// Keeping colon calls preserves Roblox's NAMECALL behavior and evaluates receivers once.
 pub(crate) struct Indirection {
@@ -304,6 +355,51 @@ impl NodePostProcessor for Constants<'_> {
                 self.interpolation = true;
             }
             _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    fn leaves(expression: &Expression, pieces: &mut Vec<Vec<u8>>) {
+        match expression {
+            Expression::String(string) => pieces.push(string.get_value().to_vec()),
+            Expression::Binary(binary) => {
+                assert_eq!(binary.operator(), BinaryOperator::Concat);
+                leaves(binary.left(), pieces);
+                leaves(binary.right(), pieces);
+            }
+            _ => panic!("unexpected fragment expression"),
+        }
+    }
+
+    #[test]
+    fn fragmentation_is_bounded_and_preserves_every_byte() {
+        for length in [0, 1, 31, 32, 33, 255, 4096, 100_000] {
+            let original: Vec<_> = (0..length).map(|i| i as u8).collect();
+            for seed in 0..16 {
+                let mut expression: Expression =
+                    StringExpression::from_value(original.clone()).into();
+                let mut rng = crate::rng::Rng::new(seed);
+                let mut splitter = SplitStrings {
+                    rng: &mut rng,
+                    count: 0,
+                };
+                splitter.process_after_expression(&mut expression);
+                let mut pieces = Vec::new();
+                leaves(&expression, &mut pieces);
+                assert_eq!(pieces.concat(), original);
+                if length < 32 {
+                    assert_eq!(pieces.len(), 1);
+                    assert_eq!(splitter.count, 0);
+                } else {
+                    assert!((2..=8).contains(&pieces.len()));
+                    assert!(pieces.iter().all(|piece| !piece.is_empty()));
+                    assert_eq!(splitter.count, 1);
+                }
+            }
         }
     }
 }

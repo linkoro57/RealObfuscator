@@ -27,6 +27,10 @@ Options:
       --keep-types          Preserve Luau type annotations and declarations
       --string-cache        Retain decoded strings for speed
       --no-string-cache     Decode strings without retaining a plaintext cache
+      --split-strings       Fragment long source strings before encoding
+      --no-split-strings    Keep source strings in one piece
+      --vm-scatter         Scatter VM data into shuffled columns (VM mode)
+      --no-vm-scatter      Keep ordinary VM descriptor tables
       --vm-rolling          Decode VM instructions while reading (default)
       --vm-cached           Cache decoded VM instructions
       --vm-packed           Use compact VM payloads
@@ -85,6 +89,8 @@ struct Args {
     functions_only: bool,
     bind_strings: Option<bool>,
     require_bound_strings: bool,
+    split_strings: Option<bool>,
+    scatter: Option<bool>,
 }
 
 fn usage(message: &str) -> ! {
@@ -131,6 +137,10 @@ fn parse() -> Args {
             "--keep-types" => args.keep_types = true,
             "--string-cache" => args.cache_strings = Some(true),
             "--no-string-cache" => args.cache_strings = Some(false),
+            "--split-strings" => args.split_strings = Some(true),
+            "--no-split-strings" => args.split_strings = Some(false),
+            "--vm-scatter" => args.scatter = Some(true),
+            "--no-vm-scatter" => args.scatter = Some(false),
             "--require-function-vm" => args.require_function_vm = true,
             "--require-chunk-vm" => args.require_chunk_vm = true,
             "--vm-functions-only" => args.functions_only = true,
@@ -239,6 +249,12 @@ fn config(args: &Args) -> ObfuscationConfig {
     if let Some(value) = args.strings {
         config.encrypt_strings = value
     }
+    if let Some(value) = args.split_strings {
+        config.split_strings = value;
+    }
+    if let Some(value) = args.scatter {
+        config.vm_scatter_data = value;
+    }
     if let Some(value) = args.cff {
         config.control_flow_flatten = value
     }
@@ -329,6 +345,10 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
                 report.output_bytes
             );
             if args.stats {
+                println!(
+                    "  split strings: {}; scattered VM tables: {}; scattered VM entries: {}",
+                    report.split_strings, report.vm_scattered_tables, report.vm_scattered_entries
+                );
                 if obfuscator.config.vm_bind_strings {
                     println!(
                         "  VM bound strings: {}; unbound runtime string references: {}",

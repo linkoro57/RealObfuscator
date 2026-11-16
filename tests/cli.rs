@@ -7,6 +7,54 @@ use std::{
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn layer_switches_report_applied_work_and_reject_scattering_without_vm() {
+    let dir = temp_dir();
+    let input = dir.join("input.luau");
+    let output = dir.join("output.luau");
+    fs::write(
+        &input,
+        "return 'a sufficiently long string to exercise source fragmentation'",
+    )
+    .unwrap();
+    for enabled in [false, true] {
+        let result = Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .args(["--mode", "hardened", "--seed", "42", "--stats"])
+            .args(if enabled {
+                ["--split-strings", "--vm-scatter"]
+            } else {
+                ["--no-split-strings", "--no-vm-scatter"]
+            })
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let stats = String::from_utf8_lossy(&result.stdout);
+        assert_eq!(
+            stats.contains("split strings: 0; scattered VM tables: 0; scattered VM entries: 0"),
+            !enabled
+        );
+    }
+    let existing = fs::read(&output).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--mode", "native", "--vm-scatter"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("requires VM mode"));
+    assert_eq!(fs::read(&output).unwrap(), existing);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn hardened_mode_exposes_coverage_and_preserves_output_on_native_string_fallback() {
     let dir = temp_dir();
     let input = dir.join("input.luau");

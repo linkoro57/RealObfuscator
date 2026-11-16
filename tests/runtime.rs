@@ -53,6 +53,63 @@ fn runtime() -> Option<PathBuf> {
     }
 }
 
+#[test]
+fn scattered_descriptors_and_fragmented_binary_strings_preserve_behavior() {
+    let Some(runtime) = runtime() else { return };
+    let workspace = Workspace::new();
+    let source = r#"
+        local first='1234567890123456789012345678901'
+        local second='12345678901234567890123456789012'
+        local binary='\000\255\001\254\002\253\003\2521234567890123456789012345678901234567890'
+        local unicode='été, 日本語, café, 😀 — une chaîne suffisamment longue'
+        local function identity(x) return x end
+        local sugar=identity 'a sufficiently long string passed without parentheses'
+        local strings={first,second,binary,unicode,sugar}
+        local function read(i) return strings[i],nil,false end
+        for i=1,#strings do
+            local value,hole,flag=read(i)
+            local sum=0
+            for j=1,#value do sum+=string.byte(value,j)*j end
+            print(i,#value,sum,hole,flag)
+        end
+        local string,table,bit32,error=false,false,false,false
+        print(sugar==identity 'a sufficiently long string passed without parentheses')
+    "#;
+    let input = workspace.0.join("original.luau");
+    fs::write(&input, source).unwrap();
+    let expected = run(&runtime, &input);
+    assert!(expected.status.success());
+    for seed in [0, 7, 42, u64::MAX] {
+        for scatter in [false, true] {
+            for packed in [false, true] {
+                for cached in [false, true] {
+                    let mut config = ObfuscationConfig::hardened().with_seed(seed);
+                    config.vm_scatter_data = scatter;
+                    config.vm_pack_bytecode = packed;
+                    config.vm_pack_constants = packed;
+                    config.vm_predecode_bytecode = cached;
+                    let output = Obfuscator::new(config)
+                        .obfuscate_with_report(source)
+                        .unwrap();
+                    assert!(output.report.split_strings >= 5);
+                    assert_eq!(output.report.vm_scattered_tables > 0, scatter);
+                    assert_eq!(output.report.vm_scattered_entries > 0, scatter);
+                    assert_eq!(output.report.vm_unbound_string_references, 0);
+                    let path = workspace.0.join("protected.luau");
+                    fs::write(&path, output.code).unwrap();
+                    let actual = run(&runtime, &path);
+                    assert!(
+                        actual.status.success(),
+                        "seed={seed} scatter={scatter} packed={packed} cached={cached}: {}",
+                        String::from_utf8_lossy(&actual.stderr)
+                    );
+                    assert_eq!(actual.stdout, expected.stdout);
+                }
+            }
+        }
+    }
+}
+
 fn run(runtime: &Path, path: &Path) -> Output {
     // A broken dispatcher must fail the test, rather than hang the entire suite.
     let mut child = Command::new(runtime)

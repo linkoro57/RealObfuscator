@@ -107,6 +107,8 @@ pub struct ObfuscationConfig {
     pub level: Option<ProtectionLevel>,
     pub rename_identifiers: bool,
     pub encrypt_strings: bool,
+    /// Fragment long source literals before encoding; bounded to eight pieces.
+    pub split_strings: bool,
     pub cache_strings: bool,
     pub obfuscate_numbers: bool,
     pub control_flow_flatten: bool,
@@ -117,6 +119,8 @@ pub struct ObfuscationConfig {
     pub anti_tamper: bool,
     pub virtualize: bool,
     pub virtualize_chunk: bool,
+    /// Emit VM tables as independently shuffled data columns, rebuilt at startup.
+    pub vm_scatter_data: bool,
     /// Bind compiled string literals to their prototype's encoding context.
     pub vm_bind_strings: bool,
     /// Reject runtime string references left outside compiled VM constants.
@@ -155,6 +159,7 @@ impl Default for ObfuscationConfig {
             level: None,
             rename_identifiers: true,
             encrypt_strings: true,
+            split_strings: false,
             cache_strings: true,
             obfuscate_numbers: true,
             control_flow_flatten: true,
@@ -164,6 +169,7 @@ impl Default for ObfuscationConfig {
             anti_tamper: true,
             virtualize: false,
             virtualize_chunk: true,
+            vm_scatter_data: false,
             vm_bind_strings: false,
             require_bound_strings: false,
             require_function_vm: false,
@@ -224,6 +230,7 @@ impl ObfuscationConfig {
         self.level = Some(level);
         self.rename_identifiers = n >= 1;
         self.encrypt_strings = n >= 1;
+        self.split_strings = n >= 3;
         self.obfuscate_numbers = n >= 1;
         self.control_flow_flatten = n >= 2;
         self.opaque_predicates = false;
@@ -231,6 +238,7 @@ impl ObfuscationConfig {
         self.table_indirection = n >= 3;
         self.anti_tamper = n >= 3;
         self.virtualize = n >= 4;
+        self.vm_scatter_data = n >= 4;
         self.cache_strings = n < 4;
         if self.virtualize {
             self.vm_hardening = "max".into();
@@ -250,6 +258,9 @@ impl ObfuscationConfig {
     }
 
     pub(crate) fn validated_options(&self) -> Result<ValidatedOptions, String> {
+        if self.vm_scatter_data && !self.virtualize {
+            return Err("vm_scatter_data requires VM mode".into());
+        }
         if self.vm_bind_strings && !self.virtualize {
             return Err("vm_bind_strings requires VM mode".into());
         }

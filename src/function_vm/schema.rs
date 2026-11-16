@@ -52,10 +52,20 @@ impl Field {
     }
 }
 
-/// One-based Luau table slots, shuffled once per build and shared by all prototypes.
+/// Luau table slots shared by all prototypes, either dense or sparse per build.
 pub(super) struct Schema([usize; Field::COUNT]);
 
 impl Schema {
+    pub fn sparse(rng: &mut Rng) -> Self {
+        let mut used = std::collections::BTreeSet::new();
+        Self(std::array::from_fn(|_| loop {
+            let slot = rng.range(1024, 1 << 24) as usize;
+            if used.insert(slot) {
+                break slot;
+            }
+        }))
+    }
+
     pub fn new(rng: &mut Rng) -> Self {
         let mut slots = std::array::from_fn(|index| index + 1);
         rng.shuffle(&mut slots);
@@ -78,6 +88,27 @@ impl Schema {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn sparse_slots_are_unique_reproducible_and_diversified() {
+        let mut layouts = BTreeSet::new();
+        for seed in 0..64 {
+            let schema = Schema::sparse(&mut Rng::new(seed));
+            let same = Schema::sparse(&mut Rng::new(seed));
+            assert_eq!(schema.0, same.0);
+            assert_eq!(
+                schema.0.into_iter().collect::<BTreeSet<_>>().len(),
+                Field::COUNT
+            );
+            assert!(schema.0.iter().all(|slot| (1024..1 << 24).contains(slot)));
+            layouts.insert(schema.0);
+            let expanded = schema.apply(include_str!("runtime.luau").to_owned());
+            for field in Field::ALL {
+                assert!(!expanded.contains(field.placeholder()));
+            }
+        }
+        assert_eq!(layouts.len(), 64);
+    }
 
     #[test]
     fn every_runtime_field_has_a_distinct_one_based_slot() {

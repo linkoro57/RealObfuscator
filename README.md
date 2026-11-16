@@ -133,6 +133,13 @@ The register-bytecode backend supports main chunks and functions, captured-varia
 cells, shuffled instruction records, opcode aliases, fused operations, lazy
 constants and per-record integrity checks.
 
+Native and stronger profiles also fragment long strings before encoding. VM and
+hardened profiles scatter the VM table graph into shuffled columns and use sparse
+prototype keys. These layers increase size and startup work; use
+`--no-split-strings` and `--no-vm-scatter` to compare their cost. See the
+[protection review](docs/protection-review.md) for the technique inventory,
+implementation decisions and extraction limits.
+
 The function compiler covers local bindings, assignments, native arithmetic/comparison operators, tables, indexing, short-circuit logic, interpolated strings, calls, recursive functions, closures, varargs, multiple returns, branches, loops, `break` and `continue`. Bindings observable by closures or native bridges use mutable cells; pure VM bodies keep their bindings directly in registers. Closure factories retain the cells present at creation, preserving captures across loop iterations and writes after a function returns. Method calls and generalized iteration use native protocol bridges with VM registers/body execution to preserve lookup order, `__iter` and yielding behavior.
 
 Functions needing unsupported constructs retain their native bodies. Direct environment/stack introspection, preserved type declarations in a candidate function, and closures embedded in iterator expressions can require fallback. Child functions may still be compiled independently. Fallback warnings appear even without `--stats`, unless `--quiet` is used. `--stats` reports compiled functions, encoded instructions, native functions and fallback reasons, and counts method, iteration and closure bridges separately. `--require-function-vm` rejects whole-function fallbacks before writing output; it still permits the reported native protocol bridges.

@@ -8,6 +8,7 @@ mod encoding;
 mod instruction;
 mod literals;
 mod runtime;
+mod scatter;
 mod schema;
 
 use self::{compiler::Program, instruction::Op, runtime::runtime, schema::Schema};
@@ -47,7 +48,11 @@ impl<'a> FunctionVm<'a> {
     ) -> Self {
         let runner = names.fresh();
         let bank = names.fresh();
-        let schema = Schema::new(&mut names.rng);
+        let schema = if config.vm_scatter_data {
+            Schema::sparse(&mut names.rng)
+        } else {
+            Schema::new(&mut names.rng)
+        };
         let decoder = if config.vm_bind_strings {
             names.fresh()
         } else {
@@ -203,10 +208,19 @@ impl<'a> FunctionVm<'a> {
                 self.report.integrity_checks += program.code.len();
             }
         }
-        let bank = Block::from(
-            VariableAssignment::from_variable(self.bank.as_str())
-                .with_value(TableExpression::new(bank)),
-        );
+        let bank = if self.config.vm_scatter_data {
+            scatter::emit(
+                &self.bank,
+                TableExpression::new(bank),
+                self.names,
+                self.report,
+            )
+        } else {
+            Block::from(
+                VariableAssignment::from_variable(self.bank.as_str())
+                    .with_value(TableExpression::new(bank)),
+            )
+        };
         let runtime = runtime(
             &self.runner,
             &self.schema,

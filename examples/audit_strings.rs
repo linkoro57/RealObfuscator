@@ -211,6 +211,36 @@ mod tests {
     use realobfuscator::{ObfuscationConfig, Obfuscator, ProtectionLevel};
 
     #[test]
+    fn native_fragmentation_removes_whole_long_literals_from_the_pool_probe() {
+        let literal =
+            "a long literal whose individual pieces remain extractable from the shared pool";
+        let source = format!("return '{literal}'");
+        for seed in [0, 7, 42] {
+            let base = ObfuscationConfig::default()
+                .with_seed(seed)
+                .with_level(ProtectionLevel::Maximum);
+            for split in [false, true] {
+                let mut config = base.clone();
+                config.split_strings = split;
+                let output = Obfuscator::new(config)
+                    .obfuscate_with_report(&source)
+                    .unwrap();
+                let audit = extract(&output.code).unwrap();
+                assert_eq!(audit.rejected, 0);
+                assert!(!audit.recovered.is_empty());
+                let whole = audit
+                    .recovered
+                    .iter()
+                    .any(|(_, bytes)| bytes == literal.as_bytes());
+                assert_eq!(whole, !split);
+                assert_eq!(output.report.split_strings, usize::from(split));
+                // Reassembling concatenation expressions is a straightforward
+                // next step for an adapted probe; this is only a pool-only test.
+            }
+        }
+    }
+
+    #[test]
     fn recovers_packed_and_table_records_without_executing_lua() {
         let source = r#"return '', '\000\255\128', 'same', 'same', [==[long string]==]"#;
         let expected = source_literals(source).unwrap();

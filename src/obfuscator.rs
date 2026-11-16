@@ -1,6 +1,6 @@
 use crate::{
     config::ObfuscationConfig,
-    constants::{Constants, Indirection},
+    constants::{Constants, Indirection, SplitStrings},
     control_flow::{ControlFlow, ControlVisitor},
     function_vm::FunctionVm,
     lexer::{lex, Kind, Token},
@@ -32,6 +32,9 @@ pub struct ObfuscationReport {
     pub renamed_bindings: usize,
     pub encrypted_strings: usize,
     pub string_references: usize,
+    pub split_strings: usize,
+    pub vm_scattered_tables: usize,
+    pub vm_scattered_entries: usize,
     pub obfuscated_numbers: usize,
     pub hidden_fields: usize,
     pub flattened_regions: usize,
@@ -146,6 +149,14 @@ impl Obfuscator {
             report.hidden_fields = indirection.count;
         }
         let mut vm_runner = None;
+        if self.config.split_strings && self.config.encrypt_strings {
+            let mut splitter = SplitStrings {
+                rng: &mut names.rng,
+                count: 0,
+            };
+            RuntimeVisitor::visit_block(&mut block, &mut splitter);
+            report.split_strings = splitter.count;
+        }
         let (mut vm_data, mut vm_runtime) = if self.config.virtualize {
             let mut compiler =
                 FunctionVm::new(&self.config, options.hardening, &mut names, &mut report);
