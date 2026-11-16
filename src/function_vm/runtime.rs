@@ -9,9 +9,18 @@ pub(super) fn runtime(
     codes: &BTreeMap<Op, Vec<u32>>,
     config: &ObfuscationConfig,
     hardening: VmHardening,
+    decoder: &str,
 ) -> String {
     let nested_execution = codes.contains_key(&Op::GenericFor);
     let mut source = include_str!("runtime.luau").to_owned();
+    source = source.replace(
+        "__STRING_DECODER__",
+        if config.vm_bind_strings {
+            include_str!("bound_strings.luau")
+        } else {
+            ""
+        },
+    );
     source = source.replace("__RUNNER__", runner);
     source = source.replace(
         "__EXECUTE_BEGIN__",
@@ -56,11 +65,16 @@ pub(super) fn runtime(
     let mut handlers = Vec::new();
     for (op, ids) in codes {
         for id in ids {
-            handlers.push((*id, handler(op, nested_execution)));
+            handlers.push((*id, handler(op, nested_execution, config.vm_bind_strings)));
         }
     }
     handlers.sort_unstable_by_key(|(id, _)| *id);
-    source.replace("__HANDLERS__", &dispatch_tree(&handlers))
+    let source = source.replace("__HANDLERS__", &dispatch_tree(&handlers));
+    if config.vm_bind_strings {
+        source.replace("decodeBound", decoder)
+    } else {
+        source
+    }
 }
 
 fn dispatch_tree(handlers: &[(u32, String)]) -> String {
@@ -77,13 +91,18 @@ fn dispatch_tree(handlers: &[(u32, String)]) -> String {
     )
 }
 
-fn constant(index: &str) -> String {
-    format!("local value=values[{index}];if value==nil then value=factories[{index}]();values[{index}]=if value==nil then nilValue else value elseif value==nilValue then value=nil end;")
+fn constant(index: &str, bind_strings: bool) -> String {
+    let arguments = if bind_strings {
+        format!("decodeBound,prototype,{index}")
+    } else {
+        String::new()
+    };
+    format!("local value=values[{index}];if value==nil then value=factories[{index}]({arguments});values[{index}]=if value==nil then nilValue else value elseif value==nilValue then value=nil end;")
 }
 
-fn handler(op: &Op, nested_execution: bool) -> String {
+fn handler(op: &Op, nested_execution: bool, bind_strings: bool) -> String {
     match op {
-        Op::Constant => return format!("{}r[a]=value", constant("b")),
+        Op::Constant => return format!("{}r[a]=value", constant("b", bind_strings)),
         Op::Move => "r[a]=r[b]",
         Op::Read => "r[a]=external[b]()",
         Op::Write => "external[a](r[b],true)",
@@ -115,7 +134,7 @@ fn handler(op: &Op, nested_execution: bool) -> String {
         Op::CellSet => "r[a][1]=r[b]",
         Op::Closure => "local cells={};for i=1,#r[c] do local id=r[c][i];cells[id]=r[id]end;r[a]=external[b](cells)",
         Op::Binary(operator) => return format!("r[a]=r[b]{operator}r[c]"),
-        Op::BinaryConstant(operator) => return format!("{}r[a]=r[b]{operator}value", constant("c")),
+        Op::BinaryConstant(operator) => return format!("{}r[a]=r[b]{operator}value", constant("c", bind_strings)),
         Op::Unary(operator) => return format!("r[a]={operator} r[b]"),
     }.to_owned()
 }

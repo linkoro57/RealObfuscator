@@ -117,6 +117,10 @@ pub struct ObfuscationConfig {
     pub anti_tamper: bool,
     pub virtualize: bool,
     pub virtualize_chunk: bool,
+    /// Bind compiled string literals to their prototype's encoding context.
+    pub vm_bind_strings: bool,
+    /// Reject runtime string references left outside compiled VM constants.
+    pub require_bound_strings: bool,
     pub require_function_vm: bool,
     pub require_chunk_vm: bool,
     pub name_min_length: usize,
@@ -160,6 +164,8 @@ impl Default for ObfuscationConfig {
             anti_tamper: true,
             virtualize: false,
             virtualize_chunk: true,
+            vm_bind_strings: false,
+            require_bound_strings: false,
             require_function_vm: false,
             require_chunk_vm: false,
             name_min_length: 8,
@@ -186,6 +192,17 @@ impl Default for ObfuscationConfig {
 }
 
 impl ObfuscationConfig {
+    /// Strict VM coverage with prototype-bound literals. This increases extraction
+    /// work, but does not establish confidentiality against a client-side analyst.
+    pub fn hardened() -> Self {
+        let mut config = Self::default().with_level(ProtectionLevel::Paranoid);
+        config.vm_bind_strings = true;
+        config.require_bound_strings = true;
+        config.require_function_vm = true;
+        config.require_chunk_vm = true;
+        config
+    }
+
     pub fn with_string_decode_mode(mut self, mode: StringDecodeMode) -> Self {
         self.string_decode_mode = mode.as_str().into();
         self
@@ -233,6 +250,18 @@ impl ObfuscationConfig {
     }
 
     pub(crate) fn validated_options(&self) -> Result<ValidatedOptions, String> {
+        if self.vm_bind_strings && !self.virtualize {
+            return Err("vm_bind_strings requires VM mode".into());
+        }
+        if self.require_bound_strings && (!self.vm_bind_strings || !self.virtualize_chunk) {
+            return Err(
+                "require_bound_strings requires prototype-bound strings and chunk compilation"
+                    .into(),
+            );
+        }
+        if self.require_bound_strings && !self.anti_tamper {
+            return Err("require_bound_strings requires integrity checks".into());
+        }
         if self.require_chunk_vm && (!self.virtualize || !self.virtualize_chunk) {
             return Err("require_chunk_vm requires VM mode with chunk compilation enabled".into());
         }

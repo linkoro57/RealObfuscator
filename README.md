@@ -1,14 +1,63 @@
-# RealObfuscator
+# RealObfuscator - Free Lua/Luau Obfuscator for Roblox
 
-A Rust command-line obfuscator for Luau and Roblox projects. Version **2.2.1** supports captured callbacks inside native method arguments without forcing whole-chunk fallback, makes fallback warnings visible without `--stats`, and disables trivial arithmetic predicates in all presets. The register-bytecode backend supports main chunks and functions, captured-variable cells, shuffled instruction records, opcode aliases, fused operations, lazy constants and per-record integrity checks.
+**RealObfuscator is a free, open-source Luau obfuscator for Roblox, written in Rust.**
+It transforms compatible `.lua` and `.luau` source files locally through a command-line
+interface or Rust library. No account, paid plan, subscription or API key is required
+for the obfuscation workflow.
 
-The [public Luraph research inventory](docs/luraph-research.md) links the GitHub, original technical analysis, Reddit discussion and official historical documentation consulted, and distinguishes implemented techniques, compatibility bridges and unknown/private features. It is not a claim of reproducing every Luraph protection.
+The runtime target is **Luau**. Lua source must be compatible with Luau; accepting a
+`.lua` extension does not imply that generated code runs in a standard Lua 5.x
+interpreter. See [compatibility and behavior](#compatibility-and-behavior).
+
+[Quick start](#build-and-run) | [Profiles](#profiles) | [FAQ](#frequently-asked-questions) | [Benchmarks](docs/benchmarks.md)
+
+| Project fact | Details |
+| --- | --- |
+| Source repository | [linkoro57/RealObfuscator](https://github.com/linkoro57/RealObfuscator) |
+| Price and license | Free to build and use; [GPL-3.0-only](LICENSE) source license |
+| Implementation | Rust command-line tool and library |
+| Input | `.lua` and `.luau` files using supported Luau syntax; single files or directories |
+| Output runtime | Luau, including Roblox projects |
+| Processing | Local files; no hosted processing service required |
+| Default profile | Lightweight local renaming, encoded strings and minification |
+| Optional layers | Integer expressions, property indirection, control-flow dispatch and register-bytecode virtualization |
+
+## What it does
+
+- Rename local bindings while preserving global and member names where required.
+- Encode string literals and apply optional number and property transformations.
+- Compile supported chunks and functions to a private register instruction set.
+- Process project directories while preserving their relative file paths.
+- Report applied transformations, VM coverage and native fallbacks with `--stats`.
+- Reproduce development builds with `--seed`, or diversify builds with OS randomness.
+
+Obfuscation increases analysis work; it does not make client-side code impossible
+to reverse engineer. Performance and coverage depend on the selected profile and
+source. The [hardening guide](docs/hardening.md), [measured optimization report](docs/performance-improvements.md)
+and [limits](#limits) explain the tradeoffs.
 
 ## Build and run
 
-```sh
-cargo build --release
+Install a stable Rust toolchain with Cargo and Git. Clone the source and run the
+included example; the first build may download Rust dependencies:
 
+```sh
+git clone https://github.com/linkoro57/RealObfuscator.git
+cd RealObfuscator
+cargo run --release --locked -- examples/score.luau --stats
+```
+
+This creates `examples/score.obf.luau`. To install the command into Cargo's binary
+directory, which must be on your `PATH`:
+
+```sh
+cargo install --path . --locked
+realobfuscator --help
+```
+
+After installation, process your own scripts:
+
+```sh
 # Default: rename locals, encode strings, minify
 realobfuscator script.luau
 
@@ -22,7 +71,53 @@ realobfuscator script.luau --mode vm --vm-hardening max --vm-rolling --vm-packed
 realobfuscator src --output build --mode native
 ```
 
-On Windows the executable is `target/release/realobfuscator.exe`. Default file output is `script.obf.luau`. Directory builds preserve relative paths, skip `.obf.lua` / `.obf.luau` files, and do not follow symlinks. Input and output directories must not overlap.
+You can also build without installing using `cargo build --release --locked`.
+On Windows the executable is `target/release/realobfuscator.exe`; run it as
+`.\target\release\realobfuscator.exe`. On Unix-like shells, a local build is
+`./target/release/realobfuscator`. Default file output is `script.obf.luau`. Directory builds preserve relative paths, skip `.obf.lua` / `.obf.luau` files, and do not follow symlinks. Input and output directories must not overlap.
+
+## Frequently asked questions
+
+### Is RealObfuscator a free Lua obfuscator?
+
+RealObfuscator is free and open source under GPL-3.0-only. It obfuscates Lua source
+that is compatible with Luau, as well as Luau scripts for Roblox. Its generated
+helpers and VM target Luau. No paid license or remote obfuscation API is required.
+Read [LICENSE](LICENSE) for the source license terms.
+
+### Does it support every Lua version?
+
+The frontend and generated runtime target Luau. Standard Lua 5.1, 5.2, 5.3, 5.4
+and LuaJIT compatibility is not promised. Check the [compatibility section](#compatibility-and-behavior)
+and validate the output in your actual runtime.
+
+### Can I use it for Roblox scripts?
+
+Roblox Luau is the project's target. It handles Luau-specific syntax, scopes,
+closures and native method bridges as documented below. The standalone interpreter
+suite checks execution equivalence; Roblox services and native userdata behavior
+still need testing in Roblox Studio.
+
+### Do scripts leave my computer?
+
+The CLI reads and writes local files. The obfuscation pipeline does not call a
+hosted processing API. Installing the Rust toolchain and downloading build
+dependencies are separate network operations.
+
+### Which profile should I start with?
+
+`lightweight` is the default. `native` adds source transformations; `vm` adds
+register-bytecode virtualization for supported constructs. `hardened` additionally
+binds string constants to VM prototypes and rejects uncovered cases. Compare
+[profile behavior](#profiles) and [benchmark results](docs/benchmark-results.md)
+against your workload before choosing more expensive layers.
+
+### Does obfuscation make scripts impossible to deobfuscate?
+
+Keys and decoders ship with client-side code. An adapted extractor or instrumented
+runtime can still recover information. [The string audit](docs/string-audit.md)
+and [hardening limitations](docs/hardening.md) document tested boundaries. Keep
+valuable authoritative logic on the server.
 
 ## Profiles
 
@@ -32,6 +127,11 @@ On Windows the executable is `target/release/realobfuscator.exe`. Default file o
 | `lightweight` (default) | Rename plus a shuffled, deduplicated string pool and eager cached decoding. |
 | `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch and decoy handlers. |
 | `vm` | Register-bytecode compilation for supported chunks/functions; captured-variable cells; randomized physical records, operand layouts and opcode aliases; constant fusion; incremental decoding and record integrity. Remaining compatible statement regions use conservative dispatch. |
+| `hardened` | Maximal VM settings with prototype-bound string constants and strict chunk/function/string coverage; uncovered runtime strings fail before output is replaced. |
+
+The register-bytecode backend supports main chunks and functions, captured-variable
+cells, shuffled instruction records, opcode aliases, fused operations, lazy
+constants and per-record integrity checks.
 
 The function compiler covers local bindings, assignments, native arithmetic/comparison operators, tables, indexing, short-circuit logic, interpolated strings, calls, recursive functions, closures, varargs, multiple returns, branches, loops, `break` and `continue`. Bindings observable by closures or native bridges use mutable cells; pure VM bodies keep their bindings directly in registers. Closure factories retain the cells present at creation, preserving captures across loop iterations and writes after a function returns. Method calls and generalized iteration use native protocol bridges with VM registers/body execution to preserve lookup order, `__iter` and yielding behavior.
 
@@ -46,6 +146,15 @@ Native control-flow dispatch requires at least three consecutive compatible stat
 Arithmetic predicates such as `(x*(x+1))%2==0` are algebraic identities, not a meaningful security boundary. Presets disable them. The library's legacy `opaque_predicates` field remains available for compatibility and experimentation; setting it to `true` adds removable arithmetic noise.
 
 ## Options
+
+[Prototype-bound hardening](docs/hardening.md) adds an extraction stage for strings
+in VM constants and native bridge arguments. It does not guarantee resistance to
+an adapted extractor or runtime instrumentation:
+
+```sh
+realobfuscator script.luau --mode hardened --stats
+realobfuscator script.luau --mode vm --vm-bound-strings --stats
+```
 
 ```sh
 # Reproducible development build
@@ -128,8 +237,8 @@ capture semantics and file publication invariants.
 The [performance optimization report](docs/performance-improvements.md) documents
 the current implementation changes, matched timings and cold-load tradeoffs.
 
-The [benchmark suite](docs/benchmarks.md) covers 24 workload families and 44
-profiles, with a 9,504-case exhaustive matrix, Rust microbenchmarks, Luau runtime
+The [benchmark suite](docs/benchmarks.md) covers 24 workload families and 46
+profiles, with a 9,936-case exhaustive matrix, Rust microbenchmarks, Luau runtime
 measurements, CSV exports and a comparison tool:
 
 ```sh
@@ -157,6 +266,9 @@ A [source-informed static extraction probe](docs/string-audit.md) recovered all 
 More dispatch, constants and decoys increase output size, memory use, compile time and execution overhead. Generated helpers consume Luau registers/locals. Error line numbers, local names and introspection of transformed code can change. Test actual Roblox workloads and target devices before deployment. Keep valuable authoritative logic on the server.
 
 A [local performance probe](docs/performance.md) records the size and execution costs of native, cached VM and maximal rolling VM profiles on the same small numeric workload. The maximal profile is much slower on that loop; it is not a default recommendation for frame-sensitive code.
+
+The [public research inventory](docs/luraph-research.md) records consulted sources,
+implemented techniques, native bridges and unknown/private features.
 
 There is no benchmark demonstrating superiority to Luraph, minimum reverse-engineering time, or resistance to dedicated devirtualizers. The research inventory explicitly records private or platform-specific mechanisms that have not been reproduced. Independent adversarial evaluation and Roblox compatibility/performance testing remain necessary.
 

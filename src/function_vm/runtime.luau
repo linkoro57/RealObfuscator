@@ -2,6 +2,7 @@ local byteValue, xorValue, packValues, unpackValues, formatValues, fail = string
 local shiftLeft, shiftRight, andValue = bit32.lshift, bit32.rshift, bit32.band
 local createTable, nextValue, selectCount = table.create, next, select
 local emptyVarargs = {n=0}
+__STRING_DECODER__
 -- Decoder state is constructed only when records actually need decoding.
 local function newDecoder(prototype)
     local payload = prototype[__PAYLOAD__]

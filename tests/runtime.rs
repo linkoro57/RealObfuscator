@@ -131,6 +131,16 @@ fn profiles() -> Vec<ObfuscationConfig> {
         .with_level(ProtectionLevel::Paranoid);
     typed_vm.strip_types = false;
     profiles.push(typed_vm);
+    for cached in [false, true] {
+        let mut bound = ObfuscationConfig::default()
+            .with_seed(73)
+            .with_level(ProtectionLevel::Paranoid);
+        bound.vm_bind_strings = true;
+        bound.vm_predecode_bytecode = cached;
+        bound.vm_pack_bytecode = !cached;
+        bound.vm_pack_constants = !cached;
+        profiles.push(bound);
+    }
     profiles
 }
 
@@ -770,5 +780,83 @@ fn virtualized_modules_preserve_returns_identity_and_shared_upvalues() {
             String::from_utf8_lossy(&actual.stdout).replace('\r', ""),
             "module-ok\n"
         );
+    }
+}
+
+#[test]
+fn corrupted_bound_literals_fail_before_their_values_are_used() {
+    stacker::maybe_grow(16 * 1024 * 1024, 32 * 1024 * 1024, corrupt_bound_literals);
+}
+
+fn corrupt_bound_literals() {
+    use darklua_core::{
+        generator::{DenseLuaGenerator, LuaGenerator},
+        nodes::*,
+        process::{DefaultVisitor, NodeProcessor, NodeVisitor},
+    };
+    struct CorruptBound {
+        changed: bool,
+        index: bool,
+    }
+    impl NodeProcessor for CorruptBound {
+        fn process_function_expression(&mut self, function: &mut FunctionExpression) {
+            if self.changed || function.iter_parameters().count() != 3 {
+                return;
+            }
+            let Some(LastStatement::Return(ret)) = function.mutate_block().mutate_last_statement()
+            else {
+                return;
+            };
+            let Some(Expression::Call(call)) = ret.iter_mut_expressions().next() else {
+                return;
+            };
+            let Arguments::Tuple(args) = call.mutate_arguments() else {
+                return;
+            };
+            if args.iter_values().count() != 4 {
+                return;
+            }
+            if self.index {
+                if let Some(argument) = args.iter_mut_values().nth(2) {
+                    *argument =
+                        BinaryExpression::new(BinaryOperator::Plus, argument.clone(), 1.0).into();
+                    self.changed = true;
+                }
+            } else if let Some(Expression::String(payload)) = args.iter_mut_values().next() {
+                let mut bytes = payload.get_value().to_vec();
+                if let Some(byte) = bytes.last_mut() {
+                    *byte ^= 1;
+                }
+                *payload = StringExpression::from_value(bytes);
+                self.changed = true;
+            }
+        }
+    }
+    let Some(runtime) = runtime() else { return };
+    let workspace = Workspace::new();
+    for cached in [false, true] {
+        for index in [false, true] {
+            let mut config = ObfuscationConfig::hardened().with_seed(7);
+            // Expose the inner ciphertext to this targeted corruption probe.
+            config.encrypt_strings = false;
+            config.vm_predecode_bytecode = cached;
+            let output=Obfuscator::new(config).obfuscate("local function f()return 'only after successful bound decoding' end;print(f())").unwrap();
+            let path = workspace.0.join(format!("bound-{cached}-{index}.luau"));
+            fs::write(&path, &output).unwrap();
+            assert!(run(&runtime, &path).status.success());
+            let mut block = darklua_core::Parser::default().parse(&output).unwrap();
+            let mut corrupt = CorruptBound {
+                changed: false,
+                index,
+            };
+            DefaultVisitor::visit_block(&mut block, &mut corrupt);
+            assert!(corrupt.changed);
+            let mut generator = DenseLuaGenerator::default();
+            generator.write_block(&block);
+            fs::write(&path, generator.into_string()).unwrap();
+            let result = run(&runtime, &path);
+            assert!(!result.status.success());
+            assert!(result.stdout.is_empty());
+        }
     }
 }

@@ -97,3 +97,9 @@ Run formatting, Clippy and all targets. Set `REQUIRE_LUAU_RUNTIME=1` for executi
 checks so an absent interpreter fails the suite; see [the test guide](../tests/README.md).
 Runtime tests compare original and generated execution across profiles and seeds.
 They establish behavioral compatibility, not resistance to reverse engineering.
+
+Optional prototype-bound strings are described in [the hardening guide](hardening.md).
+Their factories receive a decoder and context explicitly. Native bridge literals
+are moved into those same prototype factories before serialization; native
+interpolations remain conservatively uncovered. Strict coverage is checked before
+publishing output, and the decoder's interface name is preserved when renaming.

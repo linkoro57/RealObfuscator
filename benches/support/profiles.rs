@@ -114,5 +114,19 @@ pub fn all() -> Vec<Profile> {
             config,
         });
     }
+    for cached in [false, true] {
+        let mut config = vm.clone();
+        config.vm_bind_strings = true;
+        config.vm_predecode_bytecode = cached;
+        profiles.push(Profile {
+            name: if cached {
+                "vm-bound-cached"
+            } else {
+                "vm-bound-rolling"
+            }
+            .into(),
+            config,
+        });
+    }
     profiles
 }

@@ -241,4 +241,38 @@ mod tests {
         assert_eq!(audit.rejected, 1);
         assert!(audit.recovered.is_empty());
     }
+
+    #[test]
+    fn standalone_pool_extraction_stops_at_ciphertext_for_bound_literals() {
+        for source in [
+            "return 'first source-informed audit target','second source-informed audit target'",
+            "local t={};function t:send(s)return s end;return t:send('first source-informed audit target'),t:send('second source-informed audit target')",
+        ] {
+        let expected = source_literals(source).unwrap();
+        for seed in [0, 7, 42] {
+            for packed in [false, true] {
+                let mut config = ObfuscationConfig::hardened().with_seed(seed);
+                config.vm_pack_constants = packed;
+                let output = Obfuscator::new(config)
+                    .obfuscate_with_report(source)
+                    .unwrap();
+                assert!(output.report.vm_bound_strings >= 2);
+                let audit = extract(&output.code).unwrap();
+                assert!(
+                    !audit.recovered.is_empty(),
+                    "the outer pool is still extractable"
+                );
+                assert_eq!(audit.rejected, 0);
+                let recovered = audit
+                    .recovered
+                    .into_iter()
+                    .map(|(_, bytes)| bytes)
+                    .collect::<BTreeSet<_>>();
+                assert!(expected.is_disjoint(&recovered));
+                // This proves only that this pool-only probe needs another stage.
+                // The prototype parameters and inverse algorithm remain in the artifact.
+            }
+        }
+        }
+    }
 }

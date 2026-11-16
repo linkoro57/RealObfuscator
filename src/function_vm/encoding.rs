@@ -17,6 +17,7 @@ pub(super) fn descriptor(
     program: &Program,
     codes: &BTreeMap<Op, Vec<u32>>,
     packed: bool,
+    bind_strings: bool,
     rng: &mut Rng,
 ) -> [(Field, Expression); Field::COUNT] {
     let count = program.code.len();
@@ -90,8 +91,23 @@ pub(super) fn descriptor(
     } else {
         array(records)
     };
-    let constants = array(program.constants.iter().map(|value| {
-        FunctionExpression::from_block(Block::from(ReturnStatement::one(value.clone()))).into()
+    let constants = array(program.constants.iter().enumerate().map(|(index, value)| {
+        let value = if bind_strings {
+            if let Expression::String(string) = value {
+                return bound_string(
+                    string.get_value(),
+                    index as u32 + 1,
+                    seed,
+                    step,
+                    multiplier,
+                    positions[0],
+                );
+            }
+            value.clone()
+        } else {
+            value.clone()
+        };
+        FunctionExpression::from_block(Block::from(ReturnStatement::one(value))).into()
     }));
     [
         (Field::Payload, payload),
@@ -110,6 +126,41 @@ pub(super) fn descriptor(
         (Field::Records, Expression::nil()),
         (Field::Offsets, array(offsets)),
     ]
+}
+
+/// A factory receives its decoder and prototype from the running interpreter.
+/// The outer pool can expose this ciphertext, but cannot decode the original
+/// literal using the old self-contained five-field record alone.
+fn bound_string(
+    bytes: &[u8],
+    index: u32,
+    seed: u32,
+    step: u32,
+    salt: u32,
+    entry: u32,
+) -> Expression {
+    use darklua_core::nodes::{FunctionCall, TypedIdentifier};
+    let mut envelope = Vec::with_capacity(bytes.len() + 1);
+    envelope.push(index as u8);
+    envelope.extend_from_slice(bytes);
+    let key = seed ^ index.wrapping_mul(65599) ^ entry ^ 0xa511_e9b3;
+    let payload = crate::codec::encode(&envelope, key, step, salt);
+    let checksum = bytes.iter().fold(0u64, |hash, byte| {
+        (hash * 65599 + u64::from(*byte)) % 2147483647
+    });
+    let call = FunctionCall::from_name("decode")
+        .with_argument(StringExpression::from_value(payload))
+        .with_argument(checksum as f64)
+        .with_argument(Expression::identifier("index"))
+        .with_argument(Expression::identifier("context"));
+    FunctionExpression::new(
+        Block::from(ReturnStatement::one(call)),
+        ["decode", "context", "index"]
+            .map(TypedIdentifier::new)
+            .into(),
+        false,
+    )
+    .into()
 }
 
 fn rle(bytes: &[u8]) -> Vec<u8> {
@@ -133,7 +184,60 @@ fn rle(bytes: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::rle;
+    use super::*;
+
+    #[test]
+    fn bound_literals_are_recoverable_with_their_public_prototype_context() {
+        use darklua_core::nodes::{Arguments, LastStatement};
+        for bytes in [
+            Vec::new(),
+            (0..=255).collect(),
+            b"multi-byte \xf0\x9f\x98\x80".to_vec(),
+        ] {
+            for index in [1u32, 257, 20000] {
+                let (seed, step, salt, entry) = (0x12345678, 0xf1234567, 0x87654321, 19);
+                let Expression::Function(factory) =
+                    bound_string(&bytes, index, seed, step, salt, entry)
+                else {
+                    panic!("expected factory")
+                };
+                let Some(LastStatement::Return(ret)) = factory.get_block().get_last_statement()
+                else {
+                    panic!("expected return")
+                };
+                let Some(Expression::Call(call)) = ret.iter_expressions().next() else {
+                    panic!("expected call")
+                };
+                let Arguments::Tuple(args) = call.get_arguments() else {
+                    panic!("expected arguments")
+                };
+                let Some(Expression::String(payload)) = args.iter_values().next() else {
+                    panic!("expected payload")
+                };
+                // Independent inverse: context is sufficient to automate recovery.
+                // Binding removes self-contained plaintext records, not reversibility.
+                let mut state = seed ^ salt ^ entry ^ index.wrapping_mul(65599) ^ 0xa511_e9b3;
+                let decoded: Vec<_> = payload
+                    .get_value()
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, cipher)| {
+                        state ^= state << 13;
+                        state ^= state >> 17;
+                        state ^= state << 5;
+                        let value = *cipher ^ state as u8;
+                        state = state
+                            .wrapping_add(step)
+                            .wrapping_add(u32::from(*cipher))
+                            .wrapping_add(offset as u32 + 1);
+                        value
+                    })
+                    .collect();
+                assert_eq!(decoded[0], index as u8);
+                assert_eq!(&decoded[1..], bytes);
+            }
+        }
+    }
 
     // Independent reader of the Luau wire format: 255 introduces count/value.
     fn expand(encoded: &[u8]) -> Vec<u8> {

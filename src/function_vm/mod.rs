@@ -6,6 +6,7 @@ mod bridge;
 mod compiler;
 mod encoding;
 mod instruction;
+mod literals;
 mod runtime;
 mod schema;
 
@@ -31,6 +32,7 @@ pub(crate) struct FunctionVm<'a> {
     bank: String,
     programs: Vec<(u32, Program)>,
     schema: Schema,
+    decoder: String,
 }
 
 impl<'a> FunctionVm<'a> {
@@ -46,6 +48,11 @@ impl<'a> FunctionVm<'a> {
         let runner = names.fresh();
         let bank = names.fresh();
         let schema = Schema::new(&mut names.rng);
+        let decoder = if config.vm_bind_strings {
+            names.fresh()
+        } else {
+            String::new()
+        };
         Self {
             config,
             hardening,
@@ -55,6 +62,7 @@ impl<'a> FunctionVm<'a> {
             bank,
             programs: Vec::new(),
             schema,
+            decoder,
         }
     }
     fn compile(&mut self, block: &mut Block, parameters: Vec<String>, variadic: bool) {
@@ -82,7 +90,7 @@ impl<'a> FunctionVm<'a> {
         variadic: bool,
         chunk: bool,
     ) {
-        let program =
+        let mut program =
             match compiler::compile(block, &parameters, self.names.fresh(), self.names.fresh()) {
                 Ok(program) => program,
                 Err(reason) => {
@@ -105,6 +113,15 @@ impl<'a> FunctionVm<'a> {
                 break id;
             }
         };
+        if self.config.vm_bind_strings {
+            literals::bind_native_strings(
+                &mut program,
+                &self.bank,
+                id,
+                &self.decoder,
+                &self.schema,
+            );
+        }
         let external = program.external.join(",");
         let args = parameters.join(",");
         *block = syntax::generated(&format!(
@@ -161,8 +178,20 @@ impl<'a> FunctionVm<'a> {
                 program,
                 &codes,
                 self.config.vm_pack_bytecode,
+                self.config.vm_bind_strings,
                 &mut self.names.rng,
             );
+            if self.config.vm_bind_strings {
+                let bound = program
+                    .constants
+                    .iter()
+                    .filter(|value| matches!(value, Expression::String(_)))
+                    .count();
+                self.report.vm_bound_strings += bound;
+                if self.config.anti_tamper {
+                    self.report.integrity_checks += bound;
+                }
+            }
             let fields = values
                 .into_iter()
                 .map(|(field, value)| {
@@ -184,10 +213,14 @@ impl<'a> FunctionVm<'a> {
             &codes,
             self.config,
             self.hardening,
+            &self.decoder,
         );
         let mut runtime = syntax::generated(&runtime);
         let mut renamer = Renamer::new(self.names);
         renamer.preserve_name(&self.runner);
+        if self.config.vm_bind_strings {
+            renamer.preserve_name(&self.decoder);
+        }
         ScopeVisitor::visit_block(&mut runtime, &mut renamer);
         (bank, runtime)
     }

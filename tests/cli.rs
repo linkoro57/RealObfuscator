@@ -6,6 +6,42 @@ use std::{
 };
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn hardened_mode_exposes_coverage_and_preserves_output_on_native_string_fallback() {
+    let dir = temp_dir();
+    let input = dir.join("input.luau");
+    let output = dir.join("output.luau");
+    fs::write(&input, "return 'prototype-bound literal'").unwrap();
+    let invoke = || {
+        Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .args(["--mode", "hardened", "--seed", "42", "--stats"])
+            .output()
+            .unwrap()
+    };
+    let result = invoke();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout)
+        .contains("VM bound strings: 1; unbound runtime string references: 0"));
+    let existing = fs::read(&output).unwrap();
+    fs::write(
+        &input,
+        "local n=1;receiver:send(`unbound native fragment {n}`)",
+    )
+    .unwrap();
+    let result = invoke();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("outside prototype-bound"));
+    assert_eq!(fs::read(&output).unwrap(), existing);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn temp_dir() -> std::path::PathBuf {
     let n = SystemTime::now()
         .duration_since(UNIX_EPOCH)

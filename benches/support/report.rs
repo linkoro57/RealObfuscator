@@ -38,7 +38,7 @@ impl Report {
         let mut metadata_file = open("metadata.txt")?;
         metadata_file.write_all(metadata.as_bytes())?;
         let mut summary = BufWriter::new(open("summary.csv")?);
-        writeln!(summary, "kind,workload,scale,profile,seed,samples,batch,input_bytes,output_bytes,expansion,min_ms,median_ms,p95_ms,max_ms,mean_ms,stddev_ms,input_mib_per_sec,renamed_bindings,encrypted_strings,string_references,obfuscated_numbers,hidden_fields,flattened_regions,vm_chunks,vm_functions,vm_instructions,vm_opcode_variants,vm_fused_instructions,vm_native_functions,vm_native_bridges,vm_iteration_bridges,vm_closure_bridges,integrity_checks,decoy_blocks,vm_chunk_fallback,vm_fallback_reasons")?;
+        writeln!(summary, "kind,workload,scale,profile,seed,samples,batch,input_bytes,output_bytes,expansion,min_ms,median_ms,p95_ms,max_ms,mean_ms,stddev_ms,input_mib_per_sec,renamed_bindings,encrypted_strings,string_references,obfuscated_numbers,hidden_fields,flattened_regions,vm_chunks,vm_functions,vm_instructions,vm_opcode_variants,vm_fused_instructions,vm_native_functions,vm_native_bridges,vm_iteration_bridges,vm_closure_bridges,integrity_checks,decoy_blocks,vm_chunk_fallback,vm_fallback_reasons,vm_bound_strings,vm_unbound_string_references")?;
         let mut raw = BufWriter::new(open("samples.csv")?);
         writeln!(
             raw,
@@ -118,6 +118,8 @@ impl Report {
         );
         fields.push(report.vm_chunk_fallback.clone().unwrap_or_default());
         fields.push(reasons);
+        fields.push(report.vm_bound_strings.to_string());
+        fields.push(report.vm_unbound_string_references.to_string());
         write_row(&mut self.summary, &fields)?;
         for (index, sample) in measurement.samples_ms.iter().enumerate() {
             write_row(

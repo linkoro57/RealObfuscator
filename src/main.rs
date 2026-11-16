@@ -16,7 +16,7 @@ const HELP: &str = "Usage: realobfuscator [OPTIONS] <SOURCE>
 
 Options:
   -o, --output <PATH>       Output file or directory
-      --mode <MODE>         lightweight (default), rename, native, or vm
+      --mode <MODE>         lightweight (default), rename, native, vm, or hardened
                             vm compiles supported functions to register bytecode
       --require-function-vm Fail if a function needs native fallback (VM mode)
       --require-chunk-vm    Fail if the main chunk needs native fallback
@@ -31,6 +31,9 @@ Options:
       --vm-cached           Cache decoded VM instructions
       --vm-packed           Use compact VM payloads
       --vm-unpacked         Use table VM payloads
+      --vm-bound-strings    Bind compiled string constants to their VM prototype
+      --vm-unbound-strings  Use the legacy shared-pool string protection
+      --require-bound-strings Reject runtime strings outside bound VM constants
   -q, --quiet               Show errors only
   -h, --help                Print help
   -V, --version             Print version
@@ -80,6 +83,8 @@ struct Args {
     require_function_vm: bool,
     require_chunk_vm: bool,
     functions_only: bool,
+    bind_strings: Option<bool>,
+    require_bound_strings: bool,
 }
 
 fn usage(message: &str) -> ! {
@@ -129,6 +134,9 @@ fn parse() -> Args {
             "--require-function-vm" => args.require_function_vm = true,
             "--require-chunk-vm" => args.require_chunk_vm = true,
             "--vm-functions-only" => args.functions_only = true,
+            "--vm-bound-strings" => args.bind_strings = Some(true),
+            "--vm-unbound-strings" => args.bind_strings = Some(false),
+            "--require-bound-strings" => args.require_bound_strings = true,
             "--decode" => args.decode = Some(value(&mut it, &option)),
             "--seed" => {
                 args.seed = Some(
@@ -209,7 +217,8 @@ fn config(args: &Args) -> ObfuscationConfig {
         }
         Some("native") => ObfuscationConfig::default().with_level(ProtectionLevel::Maximum),
         Some("vm") => ObfuscationConfig::default().with_level(ProtectionLevel::Paranoid),
-        Some(_) => usage("mode must be lightweight, rename, native, or vm"),
+        Some("hardened") => ObfuscationConfig::hardened(),
+        Some(_) => usage("mode must be lightweight, rename, native, vm, or hardened"),
         None => {
             if let Some(level) = args.level {
                 ObfuscationConfig::default()
@@ -247,8 +256,18 @@ fn config(args: &Args) -> ObfuscationConfig {
     }
     config.minify = !args.pretty;
     config.strip_types = !args.keep_types;
-    config.require_function_vm = args.require_function_vm;
-    config.require_chunk_vm = args.require_chunk_vm;
+    config.require_function_vm |= args.require_function_vm;
+    config.require_chunk_vm |= args.require_chunk_vm;
+    if let Some(bound) = args.bind_strings {
+        config.vm_bind_strings = bound;
+    }
+    if args.require_bound_strings {
+        if args.bind_strings == Some(false) {
+            usage("--require-bound-strings conflicts with --vm-unbound-strings")
+        }
+        config.vm_bind_strings = true;
+        config.require_bound_strings = true;
+    }
     if args.functions_only {
         if !config.virtualize {
             usage("--vm-functions-only requires VM mode")
@@ -290,6 +309,9 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
             .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
         if !args.quiet {
             let report = &output_code.report;
+            if report.vm_unbound_string_references != 0 {
+                eprintln!("Warning: {} runtime string references remain outside bound VM constants; use --require-bound-strings to reject this output.", report.vm_unbound_string_references);
+            }
             if let Some(reason) = &report.vm_chunk_fallback {
                 eprintln!("Warning: main chunk remains native ({reason}); use --require-chunk-vm to reject this fallback.");
             }
@@ -307,6 +329,12 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
                 report.output_bytes
             );
             if args.stats {
+                if obfuscator.config.vm_bind_strings {
+                    println!(
+                        "  VM bound strings: {}; unbound runtime string references: {}",
+                        report.vm_bound_strings, report.vm_unbound_string_references
+                    );
+                }
                 println!("  bindings: {}; strings: {} ({} references); numbers: {}; fields: {}; dispatch regions: {}; VM statements: {}; decoys: {}; predicates: {}; integrity checks: {}",
                     report.renamed_bindings, report.encrypted_strings, report.string_references, report.obfuscated_numbers,
                     report.hidden_fields, report.flattened_regions, report.virtualized_statements, report.decoy_blocks,

@@ -1,5 +1,12 @@
 # Static string-pool extraction probe
 
+The newer [prototype-bound mode](hardening.md) adds a second extraction stage.
+The unchanged pool-only probe recovers the outer ciphertext but not the two source
+targets in its new pure-VM/native-method regression fixtures. An independent inverse
+test confirms that the original strings remain recoverable given the public VM
+context. This is not a claim that automatic recovery is impossible. The historical
+measurements below concern the legacy pool-only format.
+
 Measured on 2026-11-13 using two locally supplied artifacts and the release build of [examples/audit_strings.rs](../examples/audit_strings.rs) on Windows. No Lua was executed, and no network requests were made by the probe.
 
 ## Method

@@ -49,6 +49,8 @@ pub struct ObfuscationReport {
     pub vm_native_bridges: usize,
     pub vm_iteration_bridges: usize,
     pub vm_closure_bridges: usize,
+    pub vm_bound_strings: usize,
+    pub vm_unbound_string_references: usize,
     pub vm_fallback_reasons: BTreeMap<String, usize>,
 }
 
@@ -74,6 +76,20 @@ impl<T: NodeProcessor> NodeVisitor<T> for FieldVisitor {
     fn visit_type_function(_: &mut TypeFunctionStatement, _: &mut T) {}
     fn visit_type(_: &mut Type, _: &mut T) {}
 }
+
+#[derive(Default)]
+struct RemainingStrings(usize);
+impl NodeProcessor for RemainingStrings {
+    fn process_string_expression(&mut self, _: &mut StringExpression) {
+        self.0 += 1;
+    }
+    fn process_expression(&mut self, expression: &mut Expression) {
+        if matches!(expression, Expression::InterpolatedString(_)) {
+            self.0 += 1;
+        }
+    }
+}
+impl NodePostProcessor for RemainingStrings {}
 
 impl Obfuscator {
     pub fn new(config: ObfuscationConfig) -> Self {
@@ -140,6 +156,11 @@ impl Obfuscator {
         } else {
             (Block::default(), Block::default())
         };
+        if self.config.vm_bind_strings {
+            let mut remaining = RemainingStrings::default();
+            RuntimeVisitor::visit_block(&mut block, &mut remaining);
+            report.vm_unbound_string_references = remaining.0;
+        }
         self.check_vm_coverage(&report)?;
         let mut constants =
             Constants::new(&self.config, options.decode_mode, &mut names, &mut report);
@@ -188,6 +209,12 @@ impl Obfuscator {
     }
 
     fn check_vm_coverage(&self, report: &ObfuscationReport) -> Result<(), ObfuscationError> {
+        if self.config.require_bound_strings && report.vm_unbound_string_references != 0 {
+            return Err(ObfuscationError(format!(
+                "{} runtime string references remain outside prototype-bound VM constants (native bodies or protocol bridges)",
+                report.vm_unbound_string_references
+            )));
+        }
         if self.config.require_function_vm && report.vm_native_functions != 0 {
             let reasons = report
                 .vm_fallback_reasons
@@ -313,6 +340,51 @@ pub fn obfuscate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hardened_mode_binds_literals_and_rejects_unbound_native_strings() {
+        let config = ObfuscationConfig::hardened().with_seed(42);
+        let output = Obfuscator::new(config.clone()).obfuscate_with_report(
+            "local function f()return 'first protected literal','second protected literal' end;return f()"
+        ).unwrap();
+        assert_eq!(output.report.vm_bound_strings, 2);
+        assert_eq!(output.report.vm_unbound_string_references, 0);
+        assert!(output.report.vm_functions > 0 && output.report.vm_chunks > 0);
+        for source in [
+            "receiver:send('native bridge literal')",
+            "receiver:send 'shorthand native literal'",
+        ] {
+            let output = Obfuscator::new(config.clone())
+                .obfuscate_with_report(source)
+                .unwrap();
+            assert_eq!(output.report.vm_unbound_string_references, 0);
+            assert!(output.report.vm_bound_strings > 0);
+        }
+        let source = "local n=1;receiver:send(`native fragment {n}`)";
+        let error = Obfuscator::new(config.clone())
+            .obfuscate(source)
+            .unwrap_err();
+        assert!(error.0.contains("outside prototype-bound"), "{error}");
+        let mut permissive = config;
+        permissive.require_bound_strings = false;
+        let output = Obfuscator::new(permissive)
+            .obfuscate_with_report(source)
+            .unwrap();
+        assert!(output.report.vm_unbound_string_references > 0);
+    }
+
+    #[test]
+    fn bound_string_configuration_requires_vm_and_strict_integrity() {
+        let mut config = ObfuscationConfig::lightweight();
+        config.vm_bind_strings = true;
+        assert!(config.validate().unwrap_err().contains("VM mode"));
+        let mut config = ObfuscationConfig::hardened();
+        config.anti_tamper = false;
+        assert!(config.validate().unwrap_err().contains("integrity"));
+        let mut config = ObfuscationConfig::hardened();
+        config.vm_bind_strings = false;
+        assert!(config.validate().is_err());
+    }
 
     #[test]
     fn typed_options_preserve_legacy_seeded_outputs() {

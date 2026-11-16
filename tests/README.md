@@ -49,3 +49,9 @@ The CSV comparison tool is tested with `python -m unittest discover -s scripts/t
 Performance regression checks also verify signed-zero and binary literal indexing,
 scalar-register eligibility in the presence of bridges, exact byte-literal
 round-trips, and repeated nil/false/empty-vararg results across all runtime profiles.
+
+Prototype-bound literal checks exercise strict coverage, native bridge arguments,
+independent context-based inversion, corruption of payloads/indices, and failure
+without replacing an existing CLI output. The pool-only audit's additional test
+checks that successfully extracted outer values remain ciphertext for its source
+targets; it does not establish resistance to an adapted automatic extractor.

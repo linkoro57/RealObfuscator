@@ -3,7 +3,12 @@ name = "realobfuscator"
 version = "2.2.1"
 edition = "2021"
 license = "GPL-3.0-only"
-description = "A layered Luau obfuscator for Roblox projects"
+description = "Free, open-source Lua/Luau source obfuscator for Roblox, written in Rust"
+repository = "https://github.com/linkoro57/RealObfuscator"
+documentation = "https://github.com/linkoro57/RealObfuscator#readme"
+readme = "README.md"
+keywords = ["lua", "luau", "obfuscator", "roblox", "cli"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 darklua = "0.19.0"

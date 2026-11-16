@@ -18,10 +18,10 @@ cargo bench --bench obfuscation --locked -- --suite quick
 # 128 compiler cases plus microbenchmarks
 cargo bench --bench obfuscation --locked -- --suite standard
 
-# Inspect the exhaustive matrix: 9,504 cases
+# Inspect the exhaustive matrix: 9,936 cases
 cargo bench --bench obfuscation --locked -- --suite full --list
 
-# Execute it: three sizes, three seeds, 24 workloads and 44 profiles
+# Execute it: three sizes, three seeds, 24 workloads and 46 profiles
 cargo bench --bench obfuscation --locked -- --suite full
 
 # Also measure Luau loading and execution, checked against the original source
