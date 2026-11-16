@@ -1,5 +1,9 @@
 //! Static audit of RealObfuscator's public string-record format. Does not execute Lua.
 //! This is a source-informed regression probe, not a general-purpose deobfuscator.
+#[path = "audit_strings/adapted.rs"]
+mod adapted;
+#[path = "audit_strings/static_values.rs"]
+mod static_values;
 use darklua_core::{
     nodes::{Expression, StringExpression, TableEntry, TableExpression},
     process::{DefaultVisitor, NodeProcessor, NodeVisitor},
@@ -123,12 +127,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os().skip(1);
     let artifact =
         PathBuf::from(arguments.next().ok_or(
-            "usage: audit_strings <artifact> [--source <original>] [--dump <new-file.tsv>]",
+            "usage: audit_strings <artifact> [--pool-only] [--source <original>] [--dump <new-file.tsv>]",
         )?);
     let mut original = None;
     let mut dump = None;
+    let mut pool_only = false;
     while let Some(option) = arguments.next() {
         match option.to_str() {
+            Some("--pool-only") => pool_only = true,
             Some("--source") => {
                 original = Some(PathBuf::from(
                     arguments.next().ok_or("missing source path")?,
@@ -142,19 +148,41 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     let started = Instant::now();
     let source = fs::read_to_string(&artifact)?;
-    let audit = extract(&source)?;
+    let result = if pool_only {
+        let pool = extract(&source)?;
+        adapted::ResultSet {
+            values: pool.recovered.iter().map(|(_, s)| s.clone()).collect(),
+            pool,
+            ..Default::default()
+        }
+    } else {
+        adapted::extract_adapted(&source)?
+    };
+    let audit = &result.pool;
     let elapsed = started.elapsed();
-    let recovered: BTreeSet<_> = audit
-        .recovered
-        .iter()
-        .map(|(_, data)| data.clone())
-        .collect();
+    let recovered = &result.values;
     println!("artifact={}", artifact.display());
     println!("artifact_bytes={}", source.len());
     println!("candidate_records={}", audit.candidates);
     println!("checksum_valid_records={}", audit.recovered.len());
     println!("checksum_rejected_records={}", audit.rejected);
     println!("unique_recovered_values={}", recovered.len());
+    println!(
+        "mode={}",
+        if pool_only {
+            "pool-only"
+        } else {
+            "adapted-static"
+        }
+    );
+    println!("reconstructed_graphs={}", result.graphs);
+    println!("rejected_graphs={}", result.graph_rejected);
+    println!("decoded_vm_prototypes={}", result.prototypes);
+    println!("decoded_vm_instructions={}", result.instructions);
+    println!("rejected_vm_prototypes={}", result.vm_rejected);
+    println!("decoded_bound_strings={}", result.bound_strings);
+    println!("rejected_bound_strings={}", result.bound_rejected);
+    println!("resolved_concatenations={}", result.concatenations);
     println!("read_parse_decode_ms={:.3}", elapsed.as_secs_f64() * 1000.0);
     if let Some(original) = original {
         // Only used after extraction, to check coverage; never used to decode.
@@ -162,16 +190,25 @@ fn run() -> Result<(), Box<dyn Error>> {
         println!("source_unique_string_literals={}", literals.len());
         println!(
             "source_literals_recovered={}",
-            literals.intersection(&recovered).count()
+            literals.intersection(recovered).count()
         );
         println!(
             "source_literals_missing={}",
-            literals.difference(&recovered).count()
+            literals.difference(recovered).count()
         );
     }
     if let Some(path) = dump {
         let mut rows = String::from("id\tbyte_length\thex\tescaped_bytes\n");
-        for (id, data) in &audit.recovered {
+        let rows_to_write: Vec<_> = if pool_only {
+            audit
+                .recovered
+                .iter()
+                .map(|(id, data)| (*id as usize, data))
+                .collect()
+        } else {
+            recovered.iter().enumerate().collect()
+        };
+        for (id, data) in rows_to_write {
             write!(&mut rows, "{id}\t{}\t", data.len())?;
             for byte in data {
                 write!(&mut rows, "{byte:02x}")?;
@@ -191,8 +228,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.write_all(rows.as_bytes())?;
         println!("dump={}", path.display());
     }
-    if audit.candidates == 0 || audit.rejected != 0 {
-        return Err("no known string records found, or some candidate checksums failed".into());
+    if (audit.candidates == 0 && result.bound_strings == 0 && result.prototypes == 0)
+        || audit.rejected != 0
+        || result.graph_rejected != 0
+        || result.vm_rejected != 0
+        || result.bound_rejected != 0
+    {
+        return Err("no known string/VM data found, or recognized data failed validation".into());
     }
     Ok(())
 }

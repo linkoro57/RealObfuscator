@@ -66,6 +66,12 @@ adds decoder/concatenation work and can increase constant counts. Disable either
 layer to compare costs on a target workload. No blanket performance or security
 superiority is claimed.
 
+An [adapted static audit](string-audit.md#adapted-extraction-2026-11-16) now
+reconstructs these layers automatically: all 49 original literals in its replacement
+corpus were recovered from native, VM and hardened outputs. In particular, the
+hardened result changed from 0/49 for the old pool-only probe to 49/49 after adapting
+the extractor. The structural layers do not keep those literals confidential.
+
 ## Local cost sample
 
 Windows, optimized Rust build, Luau 0.741, seed 42; medians of five fresh

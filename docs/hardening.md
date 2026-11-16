@@ -61,6 +61,13 @@ native method names, the watermark and some structural information remain visibl
 
 ## Evidence and limits
 
+The adapted static extractor now reconstructs the scattered graph and public
+prototype context automatically. In the 2026-11-16 replacement-corpus audit, it
+recovers all **49/49 original literals** from hardened output, versus **0/49** for
+the old `--pool-only` algorithm, without executing Lua. See the
+[updated extraction results](string-audit.md#adapted-extraction-2026-11-16).
+The regression tests below describe the deliberately limited pool-only stage.
+
 The existing pool-only audit remains unchanged. Its new regression fixture checks
 two original strings in both a pure VM chunk and native method arguments, across
 three seeds and packed/table outer pools: twelve artifacts. The outer pool must
@@ -79,7 +86,7 @@ Runtime tests cover both cache/payload strategies, binary strings, interpolation
 varargs, captures and native protocol order. Targeted tests modify an inner
 ciphertext or constant index and require rejection before the value reaches the
 source program. CLI checks preserve an existing output on strict-coverage failure.
-See [the legacy audit](string-audit.md) for the original extractor's scope and data.
+See [the string audit](string-audit.md) for both the historical and adapted results.
 
 ## Performance
 
@@ -118,4 +125,4 @@ Three workloads at scale 16, seed 42; seven timed Rust samples with a 3 ms targe
 
 An additional `bound-strings-validation-20261116` run checks all 24 workloads in both bound profiles at scale 4, seed 7 (48 cases), against the original checksums. This is a correctness sweep with one process/sample per case, not precision timing.
 
-The standalone demonstration under `target/hardening-20261116/` uses native method arguments. It executes correctly and yields 5 valid outer records to `audit_strings`, with 0 of its 2 original target strings recovered by that pool-only probe. The context-based inverse test still passes, demonstrating that an adapted automatic recovery stage remains possible.
+The historical standalone demonstration under `target/hardening-20261116/` uses native method arguments. It executes correctly and yields 5 valid outer records to `audit_strings --pool-only`, with 0 of its 2 original target strings recovered by that limited probe. The current default extractor includes the adapted automatic recovery stage; the updated audit above measures it.

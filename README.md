@@ -270,6 +270,12 @@ The string pool uses one shared decoder, which an analyst can identify, emulate 
 
 A [source-informed static extraction probe](docs/string-audit.md) recovered all 167 original distinct string literals from each of two supplied artifacts, including 2.2.1, without executing Lua. The known pool decoder can be reproduced independently; the local median read/parse/decode times were below 0.2 seconds. This does not reconstruct the VM or measure discovery time, but it demonstrates that this pool format does not keep literals confidential against that extractor. Arithmetic cancellation layers such as `value + delta - delta` are removable noise as well.
 
+The adapted probe also reconstructs scattered VM data, prototype-bound strings and
+constant fragments. On a replacement 49-literal corpus it recovered **49/49** from
+native, VM and hardened outputs without executing Lua; hardened extraction took a
+local median of about 0.63 seconds. The original 167-literal corpus was unavailable
+for that rerun. See the [updated audit](docs/string-audit.md) for exact scope and evidence.
+
 More dispatch, constants and decoys increase output size, memory use, compile time and execution overhead. Generated helpers consume Luau registers/locals. Error line numbers, local names and introspection of transformed code can change. Test actual Roblox workloads and target devices before deployment. Keep valuable authoritative logic on the server.
 
 A [local performance probe](docs/performance.md) records the size and execution costs of native, cached VM and maximal rolling VM profiles on the same small numeric workload. The maximal profile is much slower on that loop; it is not a default recommendation for frame-sensitive code.
