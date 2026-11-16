@@ -19,6 +19,11 @@ An isolated Web Worker handles generation, and terminating that worker cancels a
 job. Source is limited to 1 MiB and jobs to 120 seconds; large or deeply nested
 scripts can still exceed browser memory/stack limits. Use the native CLI for them.
 
+File uploads use strict UTF-8 decoding. Files containing binary string bytes are
+converted locally by the Rust worker to editable decimal escapes, preserving
+their values instead of substituting replacement characters. Invalid bytes in
+executable syntax produce an error. Editing the source discards pending imports.
+
 The browser bridge reserves a 32 MiB Wasm stack instead of native stack switching.
 Browser randomness comes from Web Crypto through `getrandom`. Native builds retain
 their existing OS randomness and stack-growth path.

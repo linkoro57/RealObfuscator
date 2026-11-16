@@ -16,6 +16,9 @@ pub enum Value {
     Table(Rc<BTreeMap<u32, Value>>),
     Factory(Rc<FunctionExpression>),
     Xor,
+    Decoder(Rc<BTreeMap<u32, Vec<u8>>>),
+    NumberDecoder(u32),
+    Unknown,
 }
 impl Value {
     pub fn uint(&self) -> Option<u32> {
@@ -92,6 +95,9 @@ pub fn index_of(expression: &Expression, object: &str) -> Option<u32> {
 }
 
 impl Context {
+    pub fn is_xor(&self, prefix: &Prefix) -> bool {
+        matches!(self.prefix(prefix, 0), Some(Value::Xor))
+    }
     pub fn eval(&self, expression: &Expression) -> Option<Value> {
         self.inner(expression, 0)
     }
@@ -206,6 +212,12 @@ impl Context {
             }
         }
         match self.prefix(call.get_prefix(), depth + 1)? {
+            Value::Decoder(pool) if args.len() == 1 => Some(Value::String(
+                pool.get(&self.inner(args[0], depth + 1)?.uint()?)?.clone(),
+            )),
+            Value::NumberDecoder(key) if args.len() == 1 => Some(Value::Number(
+                (self.inner(args[0], depth + 1)?.uint()? ^ key) as f64,
+            )),
             Value::Xor if (2..=5).contains(&args.len()) => {
                 let mut result = 0;
                 for arg in args {

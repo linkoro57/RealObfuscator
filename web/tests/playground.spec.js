@@ -141,3 +141,36 @@ test('pretty output scrolls inside the editor instead of expanding the page', as
   expect(bounds.height).toBeLessThan(900);
   expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(1200);
 });
+
+test('binary file imports preserve literal bytes and reject invalid executable bytes', async ({ page }) => {
+  const bytes = Buffer.concat([Buffer.from("local s='"), Buffer.from([255, 128, 237, 160, 128]), Buffer.from("';print(#s,string.byte(s,1,#s))")]);
+  await page.locator('#file-input').setInputFiles({ name: 'bytes.luau', mimeType: 'application/octet-stream', buffer: bytes });
+  await expect(page.locator('#filename')).toHaveText('bytes.luau');
+  await expect(page.locator('#source')).toHaveValue(/\\255\\128/);
+  await page.locator('#preset').selectOption('hardened');
+  await page.locator('#obfuscate').click();
+  await expect(page.locator('#run-state')).toHaveText('Done');
+  const { existsSync, writeFileSync, mkdirSync } = await import('node:fs');
+  const luau = process.env.LUAU_BIN || resolve(`tests/runtime/0.741/${process.platform === 'win32' ? 'luau.exe' : 'luau'}`);
+  if (existsSync(luau)) {
+    mkdirSync('target/web-tests', { recursive: true });
+    writeFileSync('target/web-tests/bytes.luau', await page.locator('#output').inputValue());
+    const run = spawnSync(luau, ['target/web-tests/bytes.luau'], { encoding: 'utf8', timeout: 10000 });
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe('5\t255\t128\t237\t160\t128');
+  }
+  await page.locator('#file-input').setInputFiles({ name: 'invalid.luau', mimeType: 'application/octet-stream', buffer: Buffer.from([108, 111, 99, 97, 108, 32, 255, 61, 49]) });
+  await expect(page.locator('#error')).toContainText('outside a string/comment');
+  await expect(page.locator('#filename')).toHaveText('bytes.luau');
+});
+
+test('Windows escapes and surrogate byte sequences work across browser presets', async ({ page }) => {
+  await page.locator('#file-input').setInputFiles({ name: 'windows.luau', mimeType: 'text/plain', buffer: Buffer.from("local s='a\\z\r\n b';print(s,'\\u{D800}',`line \\\r\n{42}`)") });
+  await expect(page.locator('#filename')).toHaveText('windows.luau');
+  for (const preset of ['lightweight', 'native', 'vm', 'hardened']) {
+    await page.locator('#preset').selectOption(preset);
+    await page.locator('#obfuscate').click();
+    await expect(page.locator('#run-state')).toHaveText('Done');
+    await expect(page.locator('#error')).toBeHidden();
+  }
+});

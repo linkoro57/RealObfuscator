@@ -103,6 +103,16 @@ impl Obfuscator {
         self.obfuscate_with_report(source).map(|output| output.code)
     }
 
+    pub fn obfuscate_bytes_with_report(
+        &self,
+        source: &[u8],
+    ) -> Result<ObfuscationOutput, ObfuscationError> {
+        let decoded = crate::source::decode_source_bytes(source)?;
+        let mut output = self.obfuscate_with_report(&decoded)?;
+        output.report.input_bytes = source.len();
+        Ok(output)
+    }
+
     pub fn obfuscate_with_report(
         &self,
         source: &str,
@@ -124,11 +134,14 @@ impl Obfuscator {
 
     fn obfuscate_inner(&self, source: &str) -> Result<ObfuscationOutput, ObfuscationError> {
         let options = self.config.validated_options().map_err(ObfuscationError)?;
+        let input_bytes = source.len();
+        let normalized = crate::source::normalize(source)?;
+        let source = normalized.as_ref();
         // Parsing comes before all mutations. Invalid source is never written as output.
         let mut block = syntax::parse(source)?;
         let tokens = lex(source).map_err(|e| ObfuscationError(e.to_string()))?;
         let mut report = ObfuscationReport {
-            input_bytes: source.len(),
+            input_bytes,
             ..Default::default()
         };
         let resources = Resources::from_memory();
@@ -139,6 +152,8 @@ impl Obfuscator {
                 .map_err(ObfuscationError)?;
         }
         let rng = self.source_rng(source);
+        let environment_sensitive =
+            self.config.virtualize && crate::function_vm::environment_sensitive(&mut block);
         let mut names = Names::new(
             &tokens,
             rng,
@@ -166,8 +181,13 @@ impl Obfuscator {
             report.split_strings = splitter.count;
         }
         let (mut vm_data, mut vm_runtime) = if self.config.virtualize {
-            let mut compiler =
-                FunctionVm::new(&self.config, options.hardening, &mut names, &mut report);
+            let mut compiler = FunctionVm::new(
+                &self.config,
+                options.hardening,
+                &mut names,
+                &mut report,
+                environment_sensitive,
+            );
             vm_runner = Some(compiler.runner().to_owned());
             RuntimeVisitor::visit_block(&mut block, &mut compiler);
             compiler.compile_chunk(&mut block);
@@ -206,6 +226,12 @@ impl Obfuscator {
         }
         if let Some(error) = names.error {
             return Err(ObfuscationError(error));
+        }
+        if self.config.wrap_in_iife {
+            block = syntax::parse(&format!(
+                "return(function(...) {} end)(...)",
+                syntax::generate(&block, self.config.minify)
+            ))?;
         }
         let mut body = prefix.take_statements();
         body.extend(block.take_statements());
@@ -300,13 +326,7 @@ impl Obfuscator {
         }
     }
 
-    fn render(&self, mut block: Block, tokens: &[Token]) -> Result<String, ObfuscationError> {
-        if self.config.wrap_in_iife {
-            block = syntax::parse(&format!(
-                "return(function(...) {} end)(...)",
-                syntax::generate(&block, self.config.minify)
-            ))?;
-        }
+    fn render(&self, block: Block, tokens: &[Token]) -> Result<String, ObfuscationError> {
         let body = syntax::generate(&block, self.config.minify);
         // Reparse the final artifact so generator/transform defects fail before writing.
         syntax::parse(&body)

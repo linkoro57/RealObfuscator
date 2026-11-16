@@ -43,7 +43,7 @@ export const groups = [
   { title: 'Output', fields: [
     toggle('strip_types', 'Strip type annotations'),
     toggle('strip_comments', 'Strip comments'),
-    toggle('wrap_in_iife', 'Wrap in a function', 'Adds a call frame and requires type stripping.'),
+    toggle('wrap_in_iife', 'Wrap in a function', 'Isolates source locals from helpers. Adds a call frame and requires type stripping.'),
     { key: 'build_id', label: 'Build identifier', type: 'text', help: 'Empty: automatic identifier. Visible in the output header.' },
   ] },
 ];

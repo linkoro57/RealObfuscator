@@ -21,8 +21,54 @@ use crate::{
 use darklua_core::{
     nodes::*,
     process::{NodePostProcessor, NodeProcessor, NodeVisitor, ScopeVisitor},
+    rules::{ContextBuilder, ConvertFunctionToAssign, FlawlessRule},
+    Resources,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) fn environment_sensitive(block: &mut Block) -> bool {
+    let mut capture = bridge::Capture {
+        parameter: String::new(),
+        bindings: Default::default(),
+        masks: Vec::new(),
+        cells: Default::default(),
+        unsupported: false,
+        nested_closure: false,
+        introspection: false,
+    };
+    ScopeVisitor::visit_block(block, &mut capture);
+    capture.introspection
+}
+
+fn recursive_method(function: &FunctionStatement) -> bool {
+    let Some(method) = function.get_name().get_method() else {
+        return false;
+    };
+    struct Search<'a> {
+        method: &'a str,
+        found: bool,
+    }
+    impl NodeProcessor for Search<'_> {
+        fn process_function_call(&mut self, call: &mut FunctionCall) {
+            if call
+                .get_method()
+                .is_some_and(|m| m.get_name() == self.method)
+                && matches!(call.get_prefix(),Prefix::Identifier(id) if id.get_name()=="self")
+            {
+                self.found = true;
+            }
+        }
+    }
+    let mut search = Search {
+        method: method.get_name(),
+        found: false,
+    };
+    darklua_core::process::DefaultVisitor::visit_block(
+        &mut function.get_block().clone(),
+        &mut search,
+    );
+    search.found
+}
 
 pub(crate) struct FunctionVm<'a> {
     config: &'a ObfuscationConfig,
@@ -34,6 +80,7 @@ pub(crate) struct FunctionVm<'a> {
     programs: Vec<(u32, Program)>,
     schema: Schema,
     decoder: String,
+    environment_sensitive: bool,
 }
 
 impl<'a> FunctionVm<'a> {
@@ -45,6 +92,7 @@ impl<'a> FunctionVm<'a> {
         hardening: VmHardening,
         names: &'a mut Names,
         report: &'a mut ObfuscationReport,
+        environment_sensitive: bool,
     ) -> Self {
         let runner = names.fresh();
         let bank = names.fresh();
@@ -68,10 +116,16 @@ impl<'a> FunctionVm<'a> {
             programs: Vec::new(),
             schema,
             decoder,
+            environment_sensitive,
         }
     }
-    fn compile(&mut self, block: &mut Block, parameters: Vec<String>, variadic: bool) {
-        self.compile_target(block, parameters, variadic, false);
+    fn compile(
+        &mut self,
+        block: &mut Block,
+        parameters: Vec<String>,
+        variadic: bool,
+    ) -> Option<Expression> {
+        self.compile_target(block, parameters, variadic, false)
     }
     pub fn compile_chunk(&mut self, block: &mut Block) {
         if !self.config.virtualize_chunk {
@@ -94,7 +148,21 @@ impl<'a> FunctionVm<'a> {
         parameters: Vec<String>,
         variadic: bool,
         chunk: bool,
-    ) {
+    ) -> Option<Expression> {
+        if self.environment_sensitive {
+            let reason = "environment or stack introspection";
+            if chunk {
+                self.report.vm_chunk_fallback = Some(reason.into());
+            } else {
+                self.report.vm_native_functions += 1;
+                *self
+                    .report
+                    .vm_fallback_reasons
+                    .entry(reason.into())
+                    .or_default() += 1;
+            }
+            return None;
+        }
         let mut program =
             match compiler::compile(block, &parameters, self.names.fresh(), self.names.fresh()) {
                 Ok(program) => program,
@@ -109,7 +177,7 @@ impl<'a> FunctionVm<'a> {
                             .entry(reason.to_owned())
                             .or_default() += 1;
                     }
-                    return;
+                    return None;
                 }
             };
         let id = loop {
@@ -128,13 +196,31 @@ impl<'a> FunctionVm<'a> {
             );
         }
         let external = program.external.join(",");
-        let args = parameters.join(",");
-        *block = syntax::generated(&format!(
-            "return {}({}[{id}],{{{external}}},{{{args}}}{})",
+        let bridged_iteration = program
+            .code
+            .iter()
+            .any(|instruction| instruction.op == Op::GenericFor);
+        let factory = format!(
+            "{}({}[{id}],{{{external}}},{},{variadic},{bridged_iteration})",
             self.runner,
             self.bank,
-            if variadic { ",..." } else { "" }
-        ));
+            parameters.len()
+        );
+        let replacement = if chunk || !self.config.strip_types {
+            let mut args = parameters;
+            if variadic {
+                args.push("...".into());
+            }
+            *block = syntax::generated(&format!("return {factory}({})", args.join(",")));
+            None
+        } else {
+            let expression = syntax::generated(&format!("return {factory}"));
+            let Some(LastStatement::Return(ret)) = expression.get_last_statement() else {
+                unreachable!()
+            };
+            let value = ret.iter_expressions().next().unwrap().clone();
+            Some(value)
+        };
         if chunk {
             self.report.vm_chunks += 1;
         } else {
@@ -147,6 +233,7 @@ impl<'a> FunctionVm<'a> {
         self.report.vm_closure_bridges += program.closure_bridges;
         self.report.virtualized_statements += program.statements;
         self.programs.push((id, program));
+        replacement
     }
 
     /// Build shared immutable descriptors and a diversified interpreter, separately
@@ -242,29 +329,78 @@ impl<'a> FunctionVm<'a> {
 
 impl NodeProcessor for FunctionVm<'_> {}
 impl NodePostProcessor for FunctionVm<'_> {
-    fn process_after_local_function_statement(&mut self, function: &mut FunctionAssignment) {
-        let parameters = function
-            .iter_parameters()
-            .map(|p| p.get_name().to_owned())
-            .collect();
-        let variadic = function.is_variadic();
-        self.compile(function.mutate_block(), parameters, variadic);
-    }
-    fn process_after_function_expression(&mut self, function: &mut FunctionExpression) {
-        let parameters = function
-            .iter_parameters()
-            .map(|p| p.get_name().to_owned())
-            .collect();
-        let variadic = function.is_variadic();
-        self.compile(function.mutate_block(), parameters, variadic);
-    }
-    fn process_after_function_statement(&mut self, function: &mut FunctionStatement) {
-        let mut parameters = Vec::new();
-        if function.get_name().has_method() {
-            parameters.push("self".to_owned());
+    fn process_after_expression(&mut self, expression: &mut Expression) {
+        if let Expression::Function(function) = expression {
+            let parameters = function
+                .iter_parameters()
+                .map(|p| p.get_name().to_owned())
+                .collect();
+            let variadic = function.is_variadic();
+            if let Some(factory) = self.compile(function.mutate_block(), parameters, variadic) {
+                *expression = factory;
+            }
         }
-        parameters.extend(function.iter_parameters().map(|p| p.get_name().to_owned()));
-        let variadic = function.is_variadic();
-        self.compile(function.mutate_block(), parameters, variadic);
+    }
+    fn process_after_block(&mut self, block: &mut Block) {
+        let mut output = Vec::new();
+        for statement in block.take_statements() {
+            match statement {
+                Statement::LocalFunction(mut function) => {
+                    let parameters = function
+                        .iter_parameters()
+                        .map(|p| p.get_name().to_owned())
+                        .collect();
+                    let variadic = function.is_variadic();
+                    if let Some(factory) =
+                        self.compile(function.mutate_block(), parameters, variadic)
+                    {
+                        let name = function.get_name().to_owned();
+                        output.push(VariableAssignment::from_variable(name.as_str()).into());
+                        output.push(
+                            AssignStatement::new(vec![Variable::new(name)], vec![factory]).into(),
+                        );
+                    } else {
+                        output.push(Statement::LocalFunction(function));
+                    }
+                }
+                Statement::Function(mut function) => {
+                    if !self.environment_sensitive && recursive_method(&function) {
+                        self.report.vm_native_functions += 1;
+                        *self
+                            .report
+                            .vm_fallback_reasons
+                            .entry("recursive native method calls".into())
+                            .or_default() += 1;
+                        output.push(Statement::Function(function));
+                    } else if !self.config.strip_types {
+                        let mut parameters = Vec::new();
+                        if function.get_name().has_method() {
+                            parameters.push("self".into());
+                        }
+                        parameters
+                            .extend(function.iter_parameters().map(|p| p.get_name().to_owned()));
+                        let variadic = function.is_variadic();
+                        self.compile(function.mutate_block(), parameters, variadic);
+                        output.push(Statement::Function(function));
+                    } else {
+                        let mut converted = Block::from(Statement::Function(function));
+                        let resources = Resources::from_memory();
+                        let context = ContextBuilder::new("function.luau", &resources, "").build();
+                        ConvertFunctionToAssign::default()
+                            .flawless_process(&mut converted, &context);
+                        for mut statement in converted.take_statements() {
+                            if let Statement::Assign(assignment) = &mut statement {
+                                for value in assignment.iter_mut_values() {
+                                    self.process_after_expression(value);
+                                }
+                            }
+                            output.push(statement);
+                        }
+                    }
+                }
+                other => output.push(other),
+            }
+        }
+        block.set_statements(output);
     }
 }

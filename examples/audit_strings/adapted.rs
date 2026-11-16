@@ -102,17 +102,44 @@ fn schema(functions: &Functions) -> Option<(Schema, Block)> {
     }
     let mut schema = schema?;
     for (_, params, body) in &functions.0 {
-        if params.len() != 3 {
-            continue;
+        let mut candidates = Vec::new();
+        if params.len() == 3 {
+            candidates.push(body.clone());
         }
-        let fields: Vec<_> = locals(body)
-            .iter()
-            .filter_map(|(_, e)| index_of(e, &params[0]))
-            .collect();
-        if fields.len() == 4 {
-            schema.constants = fields[2];
-            schema.entry = fields[3];
-            return Some((schema, body.clone()));
+        if params.len() == 4 || params.len() == 5 {
+            struct Invocations<'a> {
+                prototype: &'a str,
+                blocks: Vec<Block>,
+            }
+            impl NodeProcessor for Invocations<'_> {
+                fn process_function_expression(&mut self, f: &mut FunctionExpression) {
+                    if locals(f.get_block())
+                        .iter()
+                        .filter(|(_, e)| index_of(e, self.prototype).is_some())
+                        .count()
+                        == 4
+                    {
+                        self.blocks.push(f.get_block().clone());
+                    }
+                }
+            }
+            let mut search = Invocations {
+                prototype: &params[0],
+                blocks: Vec::new(),
+            };
+            DefaultVisitor::visit_block(&mut body.clone(), &mut search);
+            candidates.extend(search.blocks);
+        }
+        for body in candidates {
+            let fields: Vec<_> = locals(&body)
+                .iter()
+                .filter_map(|(_, e)| index_of(e, &params[0]))
+                .collect();
+            if fields.len() == 4 {
+                schema.constants = fields[2];
+                schema.entry = fields[3];
+                return Some((schema, body));
+            }
         }
     }
     None
@@ -137,7 +164,39 @@ fn setup(block: &Block, functions: &Functions, result: &ResultSet) -> Context {
     let mut ctx = Context::default();
     let known: BTreeMap<_, _> = result.pool.recovered.iter().cloned().collect();
     let mut pools = BTreeMap::new();
-    for (var, e) in locals(block) {
+    // The current helper bundle is an initialization-only IIFE returning three
+    // interfaces. Inspect its declarations and export data; never invoke it.
+    let interfaces: Vec<_> = locals(block)
+        .into_iter()
+        .filter_map(|(name, expression)| {
+            let Expression::Call(call) = expression else {
+                return None;
+            };
+            if !args(call)?.is_empty() {
+                return None;
+            }
+            let Prefix::Parenthese(p) = call.get_prefix() else {
+                return None;
+            };
+            let Expression::Function(f) = p.inner_expression() else {
+                return None;
+            };
+            if f.iter_parameters().next().is_some() {
+                return None;
+            }
+            let Some(LastStatement::Return(ret)) = f.get_block().get_last_statement() else {
+                return None;
+            };
+            let Expression::Table(exports) = ret.iter_expressions().next()? else {
+                return None;
+            };
+            (exports.iter_entries().count() == 3).then_some((name, f.get_block(), exports))
+        })
+        .collect();
+    let declarations = locals(block)
+        .into_iter()
+        .chain(interfaces.iter().flat_map(|(_, body, _)| locals(body)));
+    for (var, e) in declarations {
         if let Some(value) = ctx.eval(e) {
             if let Value::Table(t) = &value {
                 let pool: BTreeMap<_, _> = t
@@ -162,8 +221,12 @@ fn setup(block: &Block, functions: &Functions, result: &ResultSet) -> Context {
             };
             DefaultVisitor::visit_block(&mut body.clone(), &mut visitor);
             if visitor.found.len() == 1 {
-                ctx.decoders
-                    .insert(var.clone(), pools[visitor.found.first().unwrap()].clone());
+                let values = pools[visitor.found.first().unwrap()].clone();
+                ctx.bindings.insert(
+                    var.clone(),
+                    Value::Decoder(std::rc::Rc::new(values.clone())),
+                );
+                ctx.decoders.insert(var.clone(), values);
             }
         }
         if params.len() == 6 {
@@ -173,6 +236,44 @@ fn setup(block: &Block, functions: &Functions, result: &ResultSet) -> Context {
                     ctx.rebuilders.insert(var.clone());
                 }
             }
+        }
+    }
+    for (name, _, exports) in interfaces {
+        let mut table = BTreeMap::new();
+        let mut known = false;
+        for (i, entry) in exports.iter_entries().enumerate() {
+            let TableEntry::Value(expression) = entry else {
+                continue;
+            };
+            let mut value = ctx.eval(expression).unwrap_or(Value::Unknown);
+            if let Expression::Function(factory) = expression.as_ref() {
+                let params: Vec<_> = factory.iter_parameters().collect();
+                if params.len() == 1 && factory.get_block().iter_statements().next().is_none() {
+                    if let Some(LastStatement::Return(ret)) =
+                        factory.get_block().get_last_statement()
+                    {
+                        if let Some(Expression::Call(call)) = ret.iter_expressions().next() {
+                            if ctx.is_xor(call.get_prefix()) {
+                                if let Some(args) = args(call).filter(|a| a.len() == 2) {
+                                    if matches!(args[0],Expression::Identifier(id) if id.get_name()==params[0].get_name())
+                                    {
+                                        if let Some(key) = ctx.eval(args[1]).and_then(|v| v.uint())
+                                        {
+                                            value = Value::NumberDecoder(key);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            known |= matches!(value, Value::Decoder(_) | Value::NumberDecoder(_));
+            table.insert(i as u32 + 1, value);
+        }
+        if known {
+            ctx.bindings
+                .insert(name.into(), Value::Table(std::rc::Rc::new(table)));
         }
     }
     ctx

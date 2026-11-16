@@ -203,11 +203,15 @@ Release builds use operating-system randomness. An explicit seed produces identi
 - The [darklua](https://github.com/seaofvoices/darklua) / [full_moon](https://github.com/Kampfkarren/full-moon) AST frontend handles supported Luau syntax including interpolated strings, type declarations, generics, casts, compound assignments, floor division, and generalized iteration. Unsupported or malformed syntax returns an error before output is replaced.
 - Renaming follows lexical scopes, including recursive local functions, loop bindings, implicit method `self`, shadowing and `repeat ... until` conditions. Local assignment initializers are resolved before their new bindings are introduced.
 - Quoted, long-bracket and binary strings share the same encoding pipeline. Luau escapes are decoded by the parser rather than approximated. Interpolation keeps the order of argument evaluation and uses Luau's `%*` formatting.
+- File input preserves non-UTF-8 literal bytes through decimal escapes. Windows CRLF source, `\z` whitespace escapes and surrogate Unicode escapes are accepted. Invalid executable bytes return an error. The library exposes `decode_source_bytes` and `obfuscate_bytes_with_report` for byte input.
 - Property reads, writes and table keys can be redirected through encoded string constants. Colon method calls remain intact to preserve Roblox method behavior and single receiver evaluation. Method names and named function declarations may remain visible.
 - Integer transformations are restricted to exact unsigned 32-bit values. Fractional values and larger doubles retain their original values. Numeric keys and decoder functions are captured before source locals can shadow built-ins.
 - Type syntax is removed using AST nodes by default. `--keep-types` retains syntax outside replaced VM bodies and function signatures; type declarations in a candidate body can cause native fallback. Runtime transformations skip type functions. `--!native` and optimization directives in the original leading comments are retained. Output uses `--!nocheck` and `--!nolint`.
-- The optional library `wrap_in_iife` setting defaults to `false`. Explicitly enabling it adds a function frame and requires stripped types. VM calls and native bridges themselves add interpreter frames; stack/environment introspection is not transparent through virtualization.
+- The optional `--wrap-in-iife` / library `wrap_in_iife` setting defaults to `false`. Enabling it isolates source locals from helper locals, adds a function frame and requires stripped types. Scripts using environment or stack introspection conservatively retain native functions; strict VM coverage rejects these fallbacks. Recursive `self:method()` declarations also retain native execution to preserve deep recursion. Native bridges and preserved typed signatures can still add frames.
 - Generated code is parsed again before writing. Files are written through unique, exclusively created temporary files; invalid input leaves existing output intact.
+
+See [compatibility regressions and validation](docs/compatibility-improvements.md) for
+the differential test matrix, fixes and remaining runtime limits.
 
 ## Library API
 

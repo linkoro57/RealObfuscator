@@ -8,6 +8,13 @@ cargo test
 
 Unit and CLI tests cover deterministic builds, random-stream progress, malformed syntax, lexical boundaries, safe output writes, directory isolation, applied transformation statistics, chunk/function-bytecode coverage, strict fallback rejection and the differences between hardening profiles.
 
+`tests/compatibility.rs` adds differential regressions across six configurations
+for numeric-loop coercion, signed zero, Windows and bare-CR source, surrogate
+escapes, binary file input, nested interpolation, 185–200 local bindings,
+environment mutation, and recursion to depth 10,000. The Pages workflow requires
+these tests with an official interpreter on Windows and Linux before deployment.
+Install the pinned interpreter with `python scripts/install_luau.py`.
+
 `tests/runtime.rs` executes original and generated Luau and compares stdout. Fixtures cover lexical scopes, recursion, implicit `self`, shadowed built-ins, captured-variable cells, writes after a function returns, per-iteration captures, numeric and generic loops, custom `__iter`, `repeat` conditions, `continue`, `break`, coroutine yields inside iterators and VM bodies, metatables, varargs, multiple return values, nil holes, ordered method lookup, types, interpolated strings, binary strings, Unicode escapes, long strings, floor division and number boundaries. Additional cases test register bytecode across 16 short-name build seeds, string and instruction payload corruption, rolling/cached record decoding, packed/unpacked formats, and regions larger than the 128-statement limit. Each interpreter invocation has a timeout.
 
 ## Luau interpreter

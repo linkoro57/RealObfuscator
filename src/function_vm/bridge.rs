@@ -25,6 +25,15 @@ pub(super) struct Capture {
     pub(super) introspection: bool,
 }
 impl Capture {
+    fn global_environment_field(&mut self, prefix: &Prefix, key: &str) {
+        if matches!(key, "getfenv" | "setfenv" | "debug")
+            && matches!(prefix,Prefix::Identifier(id) if id.get_name()=="_G")
+            && !self.bindings.contains_key("_G")
+            && !self.masks.iter().any(|scope| scope.contains("_G"))
+        {
+            self.introspection = true;
+        }
+    }
     fn reference(&mut self, name: &Identifier) -> Option<IndexExpression> {
         if self
             .masks
@@ -78,6 +87,19 @@ impl NodeProcessor for Capture {
         self.unsupported = true;
     }
     fn process_expression(&mut self, expression: &mut Expression) {
+        match expression {
+            Expression::Field(field) => {
+                self.global_environment_field(field.get_prefix(), field.get_field().get_name())
+            }
+            Expression::Index(index) => {
+                if let Expression::String(key) = index.get_index() {
+                    if let Ok(key) = std::str::from_utf8(key.get_value()) {
+                        self.global_environment_field(index.get_prefix(), key);
+                    }
+                }
+            }
+            _ => {}
+        }
         if let Expression::Identifier(name) = expression {
             if let Some(reference) = self.reference(name) {
                 *expression = reference.into();
@@ -85,6 +107,19 @@ impl NodeProcessor for Capture {
         }
     }
     fn process_prefix_expression(&mut self, prefix: &mut Prefix) {
+        match prefix {
+            Prefix::Field(field) => {
+                self.global_environment_field(field.get_prefix(), field.get_field().get_name())
+            }
+            Prefix::Index(index) => {
+                if let Expression::String(key) = index.get_index() {
+                    if let Ok(key) = std::str::from_utf8(key.get_value()) {
+                        self.global_environment_field(index.get_prefix(), key);
+                    }
+                }
+            }
+            _ => {}
+        }
         if let Prefix::Identifier(name) = prefix {
             if let Some(reference) = self.reference(name) {
                 *prefix = reference.into();

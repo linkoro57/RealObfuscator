@@ -25,6 +25,7 @@ pub(super) enum Op {
     BinaryConstant(&'static str),
     Unary(&'static str),
     ForCheck,
+    ForPrepare,
     ForNext,
     Format,
     Native,

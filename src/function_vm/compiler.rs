@@ -704,6 +704,7 @@ impl Compiler {
                         self.constant(1.0.into())
                     };
                     self.emit(Op::Push, state, step, 0);
+                    self.emit(Op::ForPrepare, state, 0, 0);
                     self.scopes.push(HashMap::new());
                     let index = self.bind(statement.get_identifier().get_name());
                     let start = self.code.len();

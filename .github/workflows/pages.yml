@@ -15,6 +15,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      REQUIRE_LUAU_RUNTIME: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install official Luau interpreter
+        run: python scripts/install_luau.py
+      - name: Test native and VM behavior against Luau
+        run: cargo test --workspace --locked --lib --bins --tests --example audit_strings
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -61,7 +82,7 @@ jobs:
 
   deploy:
     if: github.event_name != 'pull_request'
-    needs: build
+    needs: [build, compatibility]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

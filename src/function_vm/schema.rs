@@ -102,7 +102,11 @@ mod tests {
             );
             assert!(schema.0.iter().all(|slot| (1024..1 << 24).contains(slot)));
             layouts.insert(schema.0);
-            let expanded = schema.apply(include_str!("runtime.luau").to_owned());
+            let expanded = schema.apply(format!(
+                "{}\n{}",
+                include_str!("runtime.luau"),
+                include_str!("invocation.luau")
+            ));
             for field in Field::ALL {
                 assert!(!expanded.contains(field.placeholder()));
             }
@@ -112,7 +116,11 @@ mod tests {
 
     #[test]
     fn every_runtime_field_has_a_distinct_one_based_slot() {
-        let template = include_str!("runtime.luau");
+        let template = format!(
+            "{}\n{}",
+            include_str!("runtime.luau"),
+            include_str!("invocation.luau")
+        );
         for field in Field::ALL {
             assert!(
                 template.contains(field.placeholder()),
@@ -123,7 +131,7 @@ mod tests {
             let schema = Schema::new(&mut Rng::new(seed));
             let slots: BTreeSet<_> = Field::ALL.map(|field| schema.slot(field)).into();
             assert_eq!(slots, (1..=Field::COUNT).collect());
-            let expanded = schema.apply(template.to_owned());
+            let expanded = schema.apply(template.clone());
             for field in Field::ALL {
                 assert!(!expanded.contains(field.placeholder()));
             }

@@ -25,6 +25,7 @@ Options:
       --pretty              Format generated code across multiple lines
       --decode <lazy|eager> String decoding strategy
       --keep-types          Preserve Luau type annotations and declarations
+      --wrap-in-iife        Isolate source locals from helpers in a function frame
       --string-cache        Retain decoded strings for speed
       --no-string-cache     Decode strings without retaining a plaintext cache
       --split-strings       Fragment long source strings before encoding
@@ -82,6 +83,7 @@ struct Args {
     stats: bool,
     pretty: bool,
     keep_types: bool,
+    wrap_in_iife: bool,
     decode: Option<String>,
     cache_strings: Option<bool>,
     require_function_vm: bool,
@@ -135,6 +137,7 @@ fn parse() -> Args {
             "--stats" => args.stats = true,
             "--pretty" => args.pretty = true,
             "--keep-types" => args.keep_types = true,
+            "--wrap-in-iife" => args.wrap_in_iife = true,
             "--string-cache" => args.cache_strings = Some(true),
             "--no-string-cache" => args.cache_strings = Some(false),
             "--split-strings" => args.split_strings = Some(true),
@@ -272,6 +275,7 @@ fn config(args: &Args) -> ObfuscationConfig {
     }
     config.minify = !args.pretty;
     config.strip_types = !args.keep_types;
+    config.wrap_in_iife = args.wrap_in_iife;
     config.require_function_vm |= args.require_function_vm;
     config.require_chunk_vm |= args.require_chunk_vm;
     if let Some(bound) = args.bind_strings {
@@ -317,9 +321,9 @@ fn config(args: &Args) -> ObfuscationConfig {
 
 fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> bool {
     let result = (|| {
-        let source = fs::read_to_string(input).map_err(|e| e.to_string())?;
+        let source = fs::read(input).map_err(|e| e.to_string())?;
         let output_code = obfuscator
-            .obfuscate_with_report(&source)
+            .obfuscate_bytes_with_report(&source)
             .map_err(|e| e.to_string())?;
         atomic_write(output, &output_code.code)
             .map_err(|error| format!("cannot write {}: {error}", output.display()))?;

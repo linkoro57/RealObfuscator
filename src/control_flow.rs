@@ -53,6 +53,7 @@ fn is_vm_entry(block: &Block, runner: Option<&str>) -> bool {
         return false;
     };
     matches!(call.get_prefix(), Prefix::Identifier(name) if name.get_name() == runner)
+        || matches!(call.get_prefix(), Prefix::Call(factory) if matches!(factory.get_prefix(),Prefix::Identifier(name) if name.get_name()==runner))
 }
 
 impl ControlFlow<'_> {

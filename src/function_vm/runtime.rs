@@ -11,8 +11,32 @@ pub(super) fn runtime(
     hardening: VmHardening,
     decoder: &str,
 ) -> String {
-    let nested_execution = codes.contains_key(&Op::GenericFor);
     let mut source = include_str!("runtime.luau").to_owned();
+    let invocation = |nested_execution| {
+        let mut handlers = Vec::new();
+        for (op, ids) in codes {
+            for id in ids {
+                handlers.push((*id, handler(op, nested_execution, config.vm_bind_strings)));
+            }
+        }
+        handlers.sort_unstable_by_key(|(id, _)| *id);
+        include_str!("invocation.luau")
+            .replace("__EXECUTE_BEGIN__",if nested_execution {"local function execute(pc)"} else {"local pc=entry"})
+            .replace("__EXECUTE_END__",if nested_execution {"return 0,nil end;local signal,result=execute(entry);if signal==2 then return unpackValues(result,1,result.n) end"} else {""})
+            .replace("__HANDLERS__",&dispatch_tree(&handlers))
+    };
+    source = source.replace(
+        "__INVOCATION__",
+        &if codes.contains_key(&Op::GenericFor) {
+            format!(
+                "if bridgedIteration then {}else {}end",
+                invocation(true),
+                invocation(false)
+            )
+        } else {
+            invocation(false)
+        },
+    );
     source = source.replace(
         "__STRING_DECODER__",
         if config.vm_bind_strings {
@@ -22,17 +46,6 @@ pub(super) fn runtime(
         },
     );
     source = source.replace("__RUNNER__", runner);
-    source = source.replace(
-        "__EXECUTE_BEGIN__",
-        if nested_execution {
-            "local function execute(pc)"
-        } else {
-            "local pc=entry"
-        },
-    );
-    source = source.replace("__EXECUTE_END__", if nested_execution {
-        "return 0,nil end;local signal,result=execute(entry);if signal==2 then return unpackValues(result,1,result.n) end"
-    } else { "" });
     source = schema.apply(source);
     source = source.replace(
         "__PACKED__",
@@ -62,14 +75,6 @@ pub(super) fn runtime(
             "false"
         },
     );
-    let mut handlers = Vec::new();
-    for (op, ids) in codes {
-        for id in ids {
-            handlers.push((*id, handler(op, nested_execution, config.vm_bind_strings)));
-        }
-    }
-    handlers.sort_unstable_by_key(|(id, _)| *id);
-    let source = source.replace("__HANDLERS__", &dispatch_tree(&handlers));
     if config.vm_bind_strings {
         source.replace("decodeBound", decoder)
     } else {
@@ -124,10 +129,12 @@ fn handler(op: &Op, nested_execution: bool, bind_strings: bool) -> String {
         Op::JumpFalse => "if not r[a]then pc=b end",
         Op::JumpTrue => "if r[a]then pc=b end",
         Op::ForCheck => "local state=r[b];r[a]=(state[3]>0 and state[1]<=state[2])or(state[3]<=0 and state[1]>=state[2])",
+        Op::ForPrepare => "local state=r[a];for _=state[1],state[2],state[3] do break end;state[1]*=1;state[2]*=1;state[3]*=1",
         Op::ForNext => "r[a][1]+=r[a][3]",
         Op::Format => "r[a]=formatValues(unpackValues(r[b],1,r[b].n))",
         Op::Native => "if c==0 then r[a]=external[b](r,unpackValues(varargs,1,varargs.n))else r[a]=packValues(external[b](r,unpackValues(varargs,1,varargs.n)))end",
-        Op::GenericFor => "local signal,result=external[b](r,function()return execute(a)end,unpackValues(varargs,1,varargs.n));if signal==2 then return signal,result end;pc=c",
+        Op::GenericFor if nested_execution => "local signal,result=external[b](r,function()return execute(a)end,unpackValues(varargs,1,varargs.n));if signal==2 then return signal,result end;pc=c",
+        Op::GenericFor => "fail()",
         Op::Signal => "return a,nil",
         Op::Bind => "r[a]={r[b]}",
         Op::CellGet => "r[a]=r[b][1]",

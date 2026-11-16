@@ -124,6 +124,7 @@ pub(crate) struct Constants<'a> {
     names: &'a mut Names,
     report: &'a mut ObfuscationReport,
     decoder: String,
+    interface: String,
     format: String,
     xor: String,
     key: String,
@@ -145,6 +146,7 @@ impl<'a> Constants<'a> {
             config,
             decode_mode,
             decoder: names.fresh(),
+            interface: names.fresh(),
             format: names.fresh(),
             xor: names.fresh(),
             key: names.fresh(),
@@ -189,9 +191,12 @@ impl<'a> Constants<'a> {
             self.report.encrypted_strings += 1;
             id
         };
-        FunctionCall::from_name(self.decoder.as_str())
-            .with_argument(id as f64)
-            .into()
+        FunctionCall::from_prefix(IndexExpression::new(
+            Prefix::from_name(self.interface.as_str()),
+            1.0,
+        ))
+        .with_argument(id as f64)
+        .into()
     }
 
     fn number(&mut self, value: f64) -> Option<Expression> {
@@ -207,10 +212,12 @@ impl<'a> Constants<'a> {
         }
         self.report.obfuscated_numbers += 1;
         let encoded = value as u32 ^ self.key_value;
-        let mut expression = FunctionCall::from_name(self.xor.as_str())
-            .with_argument(encoded as f64)
-            .with_argument(Expression::identifier(self.key.as_str()))
-            .into();
+        let mut expression = FunctionCall::from_prefix(IndexExpression::new(
+            Prefix::from_name(self.interface.as_str()),
+            3.0,
+        ))
+        .with_argument(encoded as f64)
+        .into();
         for _ in 1..self.config.mba_depth {
             let delta = self.names.rng.range(1, 65536);
             // The runtime key prevents folding the entire replacement into a literal.
@@ -236,7 +243,7 @@ impl<'a> Constants<'a> {
             ));
         }
         if self.pool.is_empty() {
-            return syntax::generated(&source);
+            return self.export(syntax::generated(&source));
         }
         self.names.rng.shuffle(&mut self.pool);
         let pool = self.names.fresh();
@@ -302,7 +309,48 @@ impl<'a> Constants<'a> {
         for statement in syntax::generated(&source).take_statements() {
             prefix.push_statement(statement);
         }
-        prefix
+        self.export(prefix)
+    }
+
+    // Keep implementation locals out of the application's register budget. Only
+    // one interface binding remains live in its scope; helpers close over their
+    // builtins before application bindings or environments can change them.
+    fn export(&self, mut block: Block) -> Block {
+        if self.pool.is_empty() && !self.interpolation && self.report.obfuscated_numbers == 0 {
+            return Block::default();
+        }
+        let number: Expression = if self.report.obfuscated_numbers != 0 {
+            FunctionExpression::new(
+                syntax::generated(&format!("return {}(value,{})", self.xor, self.key)),
+                vec![TypedIdentifier::new("value")],
+                false,
+            )
+            .into()
+        } else {
+            Expression::nil()
+        };
+        let decoder = if self.pool.is_empty() {
+            Expression::nil()
+        } else {
+            Expression::identifier(self.decoder.as_str())
+        };
+        let formatter = if self.interpolation {
+            Expression::identifier(self.format.as_str())
+        } else {
+            Expression::nil()
+        };
+        block.set_last_statement(ReturnStatement::one(TableExpression::new(vec![
+            TableEntry::from_value(decoder),
+            TableEntry::from_value(formatter),
+            TableEntry::from_value(number),
+        ])));
+        Block::from(
+            VariableAssignment::from_variable(self.interface.as_str()).with_value(
+                FunctionCall::from_prefix(ParentheseExpression::new(
+                    FunctionExpression::from_block(block),
+                )),
+            ),
+        )
     }
 }
 
@@ -349,9 +397,12 @@ impl NodePostProcessor for Constants<'_> {
                     }
                 }
                 arguments.insert(0, self.string(&format));
-                *expression = FunctionCall::from_name(self.format.as_str())
-                    .with_arguments(TupleArguments::new(arguments))
-                    .into();
+                *expression = FunctionCall::from_prefix(IndexExpression::new(
+                    Prefix::from_name(self.interface.as_str()),
+                    2.0,
+                ))
+                .with_arguments(TupleArguments::new(arguments))
+                .into();
                 self.interpolation = true;
             }
             _ => {}

@@ -5,6 +5,7 @@ const source = $('source'), output = $('output');
 const example = 'local function greet(name)\n    return "Hello, " .. name .. "!"\nend\n\nprint(greet("Roblox"))\n';
 const encoder = new TextEncoder();
 let worker, ready = false, busy = false, job = 0, timer, result = null, filename = 'script.luau';
+let loadVersion=0,pendingFile=null;
 const size = value => value < 1024 ? `${value} byte${value === 1 ? '' : 's'}` : `${(value / 1024).toLocaleString('en-US', { maximumFractionDigits: 1 })} KiB`;
 
 function lines(input, gutter) {
@@ -43,6 +44,13 @@ function createWorker() {
   }, 45000);
   current.onmessage = ({ data }) => {
     if (worker !== current) return;
+    if (data.type==='source-decoded'||data.type==='source-error') {
+      if (!pendingFile || data.id!==loadVersion) return;
+      const file=pendingFile;pendingFile=null;
+      if (data.type==='source-error') {message(data.error,true);return;}
+      filename=file.name;source.value=data.source;$('filename').textContent=filename;source.dispatchEvent(new Event('input'));
+      return;
+    }
     if (data.type === 'ready') { clearTimeout(initTimer); ready = true; $('obfuscate').disabled = false; $('engine-status').textContent = 'Engine ready · Rust / WASM'; return; }
     if (data.type === 'init-error') { clearTimeout(initTimer); $('engine-status').textContent = 'Engine unavailable'; message(`Could not load the engine. Reload the page.\n${data.error}`, true); return; }
     if (data.id !== job) return;
@@ -109,7 +117,7 @@ $('options-dialog').addEventListener('close', () => $('open-options').focus());
 $('pretty').addEventListener('change', () => { updateOptionsCount(); invalidate(); });
 $('seed').addEventListener('input', invalidate);
 $('random-seed').addEventListener('click', () => { const words = crypto.getRandomValues(new Uint32Array(2)); $('seed').value = ((BigInt(words[0]) << 32n) | BigInt(words[1])).toString(); invalidate(); });
-source.addEventListener('input', () => { $('source-size').textContent = size(encoder.encode(source.value).length); lines(source, $('source-lines')); invalidate(); });
+source.addEventListener('input', () => { loadVersion++;pendingFile=null;$('source-size').textContent = size(encoder.encode(source.value).length); lines(source, $('source-lines')); invalidate(); });
 source.addEventListener('scroll', () => { $('source-lines').scrollTop = source.scrollTop; });
 output.addEventListener('scroll', () => { $('output-lines').scrollTop = output.scrollTop; });
 $('example').addEventListener('click', () => { source.value = example; filename = 'example.luau'; $('filename').textContent = filename; source.dispatchEvent(new Event('input')); source.focus(); });
@@ -119,11 +127,26 @@ $('file-input').addEventListener('change', async event => {
   const file = event.target.files[0]; event.target.value = ''; if (!file) return;
   if (!/\.(lua|luau)$/i.test(file.name)) { message('Choose a .lua or .luau file.', true); return; }
   if (file.size > 1024 * 1024) { message('Browser limit: 1 MiB. Use the CLI for larger files.', true); return; }
-  try { const text = await file.text(); filename = file.name; source.value = text; $('filename').textContent = filename; source.dispatchEvent(new Event('input')); }
-  catch { message('Could not read this file.', true); }
+  const version=++loadVersion;
+  if (busy) cancel();
+  clearResult();
+  pendingFile={name:file.name};
+  try {
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    if (version!==loadVersion) return;
+    try {
+      const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+      filename=file.name;source.value=text;$('filename').textContent=filename;source.dispatchEvent(new Event('input'));
+    } catch {
+      if (!worker) throw new Error('The browser engine is unavailable.');
+      pendingFile={name:file.name};message('Reading binary string bytes locally…');
+      worker.postMessage({type:'decode-source',id:version,bytes},[bytes.buffer]);
+    }
+  }
+  catch { if(version===loadVersion){pendingFile=null;message('Could not read this file.', true);} }
 });
 $('configuration').addEventListener('submit', event => {
-  event.preventDefault(); if (!ready || busy) return;
+  event.preventDefault(); if (!ready || busy || pendingFile) return;
   if (!source.value.trim()) { message('Paste code or load a file before obfuscating.', true); source.focus(); return; }
   if (encoder.encode(source.value).length > 1024 * 1024) { message('Browser limit: 1 MiB. Use the CLI for this file.', true); return; }
   try {

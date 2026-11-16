@@ -168,6 +168,11 @@ pub fn obfuscate(source: &str, settings: &str) -> Result<String, JsValue> {
     run(source, settings).map_err(|e| JsValue::from_str(&e))
 }
 
+#[wasm_bindgen]
+pub fn decode_source(bytes: &[u8]) -> Result<String, JsValue> {
+    realobfuscator::decode_source_bytes(bytes).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

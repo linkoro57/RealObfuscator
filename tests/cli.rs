@@ -7,6 +7,37 @@ use std::{
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn binary_source_files_are_lossless_and_invalid_code_preserves_existing_output() {
+    let dir = temp_dir();
+    let input = dir.join("binary.luau");
+    let output = dir.join("binary.obf.luau");
+    fs::write(&input, b"return '\xff\x80', [=[\xfe]=]").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--mode", "hardened", "--seed", "42"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let original = fs::read(&output).unwrap();
+    fs::write(&input, b"local \xff=1").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert_eq!(fs::read(&output).unwrap(), original);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn layer_switches_report_applied_work_and_reject_scattering_without_vm() {
     let dir = temp_dir();
     let input = dir.join("input.luau");

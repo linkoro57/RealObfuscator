@@ -3,6 +3,10 @@
 The library transforms AST nodes; the public lexer provides metadata and lexical
 utilities. The CLI owns filesystem traversal, diagnostics and publication.
 
+`source.rs` prepares byte input before parsing: it preserves binary literal bytes,
+normalizes CRLF, and expands surrogate escapes into their Luau UTF-8 bytes. Long
+strings retain bare CR bytes and literal backslash sequences.
+
 ## Pipeline
 
 `Obfuscator::obfuscate_inner` validates configuration, parses source, removes types
@@ -36,11 +40,18 @@ when emitting output or allocating random identifiers.
 | `instruction.rs` | Logical instruction vocabulary |
 | `encoding.rs` | Physical placement, branch relocation, compression and record encoding |
 | `schema.rs` | Named descriptor fields and their randomized Luau table slots |
-| `runtime.rs` / `runtime.luau` | Interpreter generation and execution |
+| `runtime.rs` / `runtime.luau` / `invocation.luau` | Interpreter factory and invocation generation |
 
 Compilation borrows the input AST and builds private mutable state. It returns a
 `Program` only when the whole candidate succeeds, including its final empty return.
 The caller replaces the candidate body and publishes statistics only on success.
+With stripped types, function declarations become factory-created VM closures,
+removing a forwarding call from each invocation. Local declarations retain a
+separate lexical binding before assignment so recursive references remain valid.
+Only prototypes with generic iteration bridges receive nested execution frames.
+Preserved signatures and the main chunk keep forwarding bodies. Environment
+introspection is detected before renaming and prevents virtualization throughout
+the source; recursive native namecalls have a reported conservative fallback.
 Unsupported constructs discard the candidate state; previously compiled child
 functions may remain virtualized inside a native parent. Literal lookup uses
 indexed decoded strings, exact numeric bits, and explicit nil/boolean slots;

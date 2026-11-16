@@ -28,7 +28,9 @@ pub mod lexer;
 mod names;
 pub mod obfuscator;
 pub mod rng;
+mod source;
 mod syntax;
+pub use source::decode_source_bytes;
 
 pub use config::{
     DeadCodeDensity, ObfuscationConfig, ProtectionLevel, StringDecodeMode, VmHardening,
