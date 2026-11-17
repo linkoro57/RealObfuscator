@@ -657,17 +657,33 @@ fn seeds_diversify_dispatch_and_runtime_results_are_stable() {
 #[test]
 fn string_payload_tampering_fails_before_the_source_runs() {
     use darklua_core::{
-        nodes::StringExpression,
+        nodes::{Expression, StringExpression, TableEntry, TableExpression},
         process::{DefaultVisitor, NodeProcessor, NodeVisitor},
     };
     struct Corrupt(bool);
     impl NodeProcessor for Corrupt {
-        fn process_string_expression(&mut self, string: &mut StringExpression) {
-            if !self.0 && !string.get_value().is_empty() {
-                let mut bytes = string.get_value().to_vec();
-                bytes[0] ^= 1;
-                *string = StringExpression::from_value(bytes);
-                self.0 = true;
+        fn process_table_expression(&mut self, table: &mut TableExpression) {
+            // Target a pool record: payload, seed, step, salt, checksum.
+            // The first source string may instead be a provenance watermark.
+            let entries = table.get_entries();
+            if self.0
+                || entries.len() != 5
+                || !entries[1..]
+                    .iter()
+                    .all(|entry| matches!(entry, TableEntry::Value(value) if matches!(value.as_ref(), Expression::Number(_))))
+            {
+                return;
+            }
+            if let Some(TableEntry::Value(value)) = table.iter_mut_entries().next() {
+                let Expression::String(string) = value.as_mut() else {
+                    return;
+                };
+                if !string.get_value().is_empty() {
+                    let mut bytes = string.get_value().to_vec();
+                    bytes[0] ^= 1;
+                    *string = StringExpression::from_value(bytes);
+                    self.0 = true;
+                }
             }
         }
     }
@@ -688,8 +704,18 @@ fn string_payload_tampering_fails_before_the_source_runs() {
     use darklua_core::generator::{DenseLuaGenerator, LuaGenerator};
     let mut generator = DenseLuaGenerator::default();
     generator.write_block(&block);
+    let corrupted = generator.into_string();
+    let detection = realobfuscator::detect_watermark(&corrupted).unwrap();
+    assert!(
+        detection.embedded_watermark,
+        "pool corruption must leave the provenance packet intact"
+    );
+    assert!(
+        !detection.content_matches,
+        "pool corruption must change executable content"
+    );
     let path = workspace.0.join("tampered.luau");
-    fs::write(&path, generator.into_string()).unwrap();
+    fs::write(&path, corrupted).unwrap();
     let actual = run(&runtime, &path);
     assert!(!actual.status.success());
     assert!(
