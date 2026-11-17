@@ -33,6 +33,28 @@ plaintext lifetime. User code can still store or expose returned values.
 
 ## Configuration and cost
 
+All VM profiles also use contextual word encoding and alias-specific operand
+roles. Opcode, successor and operand words are transformed together through
+rotate/XOR/add feedback keyed by prototype parameters, physical record position
+and, for recipe records, the preceding literal state. Repeated operations therefore
+do not have a directly reusable encoded opcode word. Each alias of one operation
+uses a different permutation of its three operands, and its handler consumes that
+permutation directly. Relocation happens before these transformations.
+
+These layers require a static reader to reproduce another record transformation
+and recover the operand roles of handlers. They remain public reversible
+transformations. The adapted audit has been updated with an independent inverse;
+its ability to extract literals is preserved, not counted as a protection failure
+that can be hidden by changing a file format. Existing historical audit timings
+do not measure this revised wire format.
+
+Word feedback adds work to every cold/cached initialization or rolling decode and
+can reduce the effectiveness of per-record RLE compression. Cached execution pays
+this decoding cost at initialization; rolling execution repeats it on each
+instruction visit. No claim of improved analyst recovery time follows from these
+changes. Seeded output changes with this version; generated scripts remain
+self-contained and do not depend on a separately installed decoder.
+
 ```sh
 # New instruction-linked reconstruction is enabled by Hardened.
 realobfuscator script.luau --mode hardened --stats

@@ -1,5 +1,6 @@
 local byteValue, xorValue, packValues, unpackValues, formatValues, fail = string.byte, bit32.bxor, table.pack, table.unpack, string.format, error
 local shiftLeft, shiftRight, andValue = bit32.lshift, bit32.rshift, bit32.band
+local rotateLeft, rotateRight = bit32.lrotate, bit32.rrotate
 local createTable, nextValue, selectCount = table.create, next, select
 local emptyVarargs = {n=0}
 -- Decoder state is constructed only when records actually need decoding.
@@ -63,7 +64,7 @@ local function newDecoder(prototype)
             for i = 1, 20 do hash = (hash * 257 + bytes[i]) % 2147483647 end
             if hash ~= word(21) then fail() end
         end
-        return word(slot1),word(slot2),word(slot3),word(slot4),word(slot5)
+        __WORD_DECODER__
     end
     return decode
 end

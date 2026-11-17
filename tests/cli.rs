@@ -136,6 +136,38 @@ fn temp_dir() -> std::path::PathBuf {
 }
 
 #[test]
+fn compatible_mode_binds_native_literals_without_claiming_full_vm_coverage() {
+    let dir = temp_dir();
+    let input = dir.join("input.luau");
+    let output = dir.join("output.luau");
+    fs::write(
+        &input,
+        "local function f()return getfenv(),'native fallback literal' end;print(f())",
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--mode", "compatible", "--seed", "42", "--stats"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report = String::from_utf8_lossy(&result.stdout);
+    assert!(report.contains("unbound runtime string references: 0"));
+    assert!(report.contains("native fallback bound strings:"));
+    assert!(report.contains("VM functions: 0"));
+    assert!(report.contains("VM main chunks: 0"));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("remain native"));
+    assert!(fs::metadata(output).unwrap().len() > 0);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn cli_obfuscates_a_file_and_is_reproducible() {
     let dir = temp_dir();
     let input = dir.join("input.luau");

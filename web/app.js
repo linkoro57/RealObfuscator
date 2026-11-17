@@ -1,4 +1,5 @@
 import { fields, defaults, descriptions, renderOptions, setOptions, syncDependencies, settings } from './options.js';
+import './detector.js';
 
 const $ = id => document.getElementById(id);
 const source = $('source'), output = $('output');

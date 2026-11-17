@@ -754,7 +754,14 @@ fn corrupt_instruction_records() {
     struct CorruptRecord(bool);
     impl NodeProcessor for CorruptRecord {
         fn process_string_expression(&mut self, string: &mut StringExpression) {
-            if !self.0 && string.get_value().len() > 128 {
+            if !self.0
+                && string.get_value().len() > 128
+                && string
+                    .get_value()
+                    .iter()
+                    .any(|byte| !matches!(byte, b' ' | b'\t'))
+            {
+                // The independent whitespace provenance literal is not bytecode.
                 let bytes: Vec<_> = string.get_value().iter().map(|byte| byte ^ 1).collect();
                 *string = StringExpression::from_value(bytes);
                 self.0 = true;

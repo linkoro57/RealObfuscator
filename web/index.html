@@ -15,11 +15,11 @@
   <a class="skip-link" href="#source">Skip to source code</a>
   <header class="header">
     <div class="brand"><img src="./icon.svg" alt="" width="38" height="38"><div><h1>RealObfuscator <span>Playground</span></h1><p>Your code. Your settings. In your browser.</p></div></div>
-    <nav aria-label="Links and actions"><a class="button quiet" href="https://github.com/linkoro57/RealObfuscator" target="_blank" rel="noreferrer">GitHub ↗</a><a class="button quiet docs-link" href="https://github.com/linkoro57/RealObfuscator#readme" target="_blank" rel="noreferrer">Documentation ↗</a><button id="obfuscate" class="button primary" type="submit" form="configuration" disabled><span aria-hidden="true">▷</span> Obfuscate</button><button id="cancel" class="button danger" hidden>Cancel</button></nav>
+    <nav aria-label="Links and actions"><a class="button quiet" href="https://github.com/linkoro57/RealObfuscator" target="_blank" rel="noreferrer">GitHub ↗</a><a class="button quiet docs-link" href="https://github.com/linkoro57/RealObfuscator#readme" target="_blank" rel="noreferrer">Documentation ↗</a><button id="open-detector" class="button" type="button">Identify a script</button><button id="obfuscate" class="button primary" type="submit" form="configuration" disabled><span aria-hidden="true">▷</span> Obfuscate</button><button id="cancel" class="button danger" hidden>Cancel</button></nav>
   </header>
   <main>
     <form id="configuration" class="toolbar">
-      <div class="field preset-field"><label for="preset">Preset</label><select id="preset"><option value="lightweight">Lightweight</option><option value="rename">Rename</option><option value="native">Native</option><option value="vm">Virtual machine</option><option value="hardened">Hardened</option></select></div>
+      <div class="field preset-field"><label for="preset">Preset</label><select id="preset"><option value="lightweight">Lightweight</option><option value="rename">Rename</option><option value="native">Native</option><option value="vm">Virtual machine</option><option value="compatible">Compatible</option><option value="hardened">Hardened (strict)</option></select></div>
       <div class="field runtime-field"><label for="runtime">Target</label><input id="runtime" value="Luau / Roblox" readonly></div>
       <div class="field seed-field"><label for="seed">Seed <span class="muted">optional</span></label><div class="input-group"><input id="seed" inputmode="numeric" pattern="[0-9]*" placeholder="Random" autocomplete="off" aria-describedby="seed-help"><button id="random-seed" class="button icon-button" type="button" aria-label="Generate a seed">↻</button></div></div>
       <label class="format-control"><input id="pretty" type="checkbox"><span>Pretty output</span></label>
@@ -45,12 +45,23 @@
         <div class="report-content"><div id="notice" class="notice" role="status" aria-live="polite">Load or paste a script to get started.</div><div id="error" class="error" role="alert" hidden></div><div id="warnings" class="warnings" hidden></div><dl id="summary" class="summary" hidden></dl><details id="stats-details" hidden><summary>All statistics</summary><dl id="stats" class="stats"></dl></details><button id="download-report" class="text-button report-download" hidden>Download JSON report</button><div class="privacy"><h3>Your code stays here</h3><p>The Rust engine runs in your browser. No source is sent to a server and no scripts are executed.</p><p>Obfuscation increases analysis effort; it does not keep client-side secrets confidential.</p></div></div>
       </aside>
     </div>
-    <footer class="page-footer"><span>RealObfuscator · Rust + WebAssembly</span><span>.lua and .luau files · Luau runtime · 1 MiB maximum</span><a href="./LICENSE">GPL-3.0-only</a></footer>
+    <footer class="page-footer"><span>RealObfuscator · Rust + WebAssembly</span><span>.lua and .luau files · Luau runtime · 1 MiB maximum</span><span><a href="./LICENSE">GPL-3.0-only</a> · <a href="./NOTICE.md">Attribution notices</a></span></footer>
   </main>
   <dialog id="options-dialog" aria-labelledby="options-heading">
     <form method="dialog" class="dialog-header"><div><h2 id="options-heading">Advanced settings</h2><p>Settings override the selected preset.</p></div><button class="button icon-button" aria-label="Close settings">✕</button></form>
     <div class="dialog-body"><p class="options-help">Changing presets resets these settings. Incompatible combinations return an error before output is generated.</p><div id="options-fields"></div></div>
     <div class="dialog-footer"><button id="reset-options" class="button">Reset to preset</button><button id="close-options" class="button primary">Done</button></div>
+  </dialog>
+  <dialog id="detector-dialog" aria-labelledby="detector-heading">
+    <form method="dialog" class="dialog-header"><div><h2 id="detector-heading">Identify a script</h2><p>Check for RealObfuscator attribution markers. No script is executed or uploaded.</p></div><button class="button icon-button" aria-label="Close script detector">✕</button></form>
+    <div class="dialog-body detector-body">
+      <label for="detect-source">Script to inspect</label>
+      <p id="detect-help" class="options-help">Paste code or load a UTF-8 file, up to 8 MiB. A marker can be forged or removed; this check cannot prove who created a script.</p>
+      <textarea id="detect-source" aria-describedby="detect-help" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste the script you found here…"></textarea>
+      <input id="detect-file" type="file" accept=".lua,.luau,.txt,text/plain" hidden>
+      <div id="detect-status" class="detection-result" role="status" aria-live="polite" aria-atomic="true" hidden><h3 id="detect-title"></h3><p id="detect-detail"></p></div>
+    </div>
+    <div class="dialog-footer"><button id="detect-load" class="button" type="button">Load file</button><div class="detector-actions"><button id="detect-cancel" class="button" type="button" hidden>Cancel scan</button><button id="detect-run" class="button primary" type="button">Check script</button></div></div>
   </dialog>
   <noscript><p class="error">JavaScript and WebAssembly are required to use this playground.</p></noscript>
 </body>

@@ -16,6 +16,7 @@ struct NativeStrings<'a> {
     prototype: IndexExpression,
     constant_slot: usize,
     decoder: &'a str,
+    formatter: Option<&'a str>,
 }
 
 impl NativeStrings<'_> {
@@ -49,8 +50,38 @@ impl NodeProcessor for NativeStrings<'_> {
 }
 impl NodePostProcessor for NativeStrings<'_> {
     fn process_after_expression(&mut self, expression: &mut Expression) {
-        if let Expression::String(string) = expression {
-            *expression = self.bind(string);
+        match expression {
+            Expression::String(string) => *expression = self.bind(string),
+            Expression::InterpolatedString(string) if self.formatter.is_some() => {
+                // Evaluate all values before __tostring conversions, as in Luau.
+                let mut format = Vec::new();
+                let mut values = Vec::new();
+                for segment in string.iter_segments() {
+                    match segment {
+                        InterpolationSegment::String(segment) => {
+                            for &byte in segment.get_value() {
+                                format.push(byte);
+                                if byte == b'%' {
+                                    format.push(byte);
+                                }
+                            }
+                        }
+                        InterpolationSegment::Value(segment) => {
+                            format.extend_from_slice(b"%*");
+                            // Interpolation consumes exactly one value, including
+                            // nil when the last call returns no values.
+                            values.push(
+                                ParentheseExpression::new(segment.get_expression().clone()).into(),
+                            );
+                        }
+                    }
+                }
+                values.insert(0, self.bind(&StringExpression::from_value(format)));
+                *expression = FunctionCall::from_name(self.formatter.unwrap())
+                    .with_arguments(TupleArguments::new(values))
+                    .into();
+            }
+            _ => {}
         }
     }
 }
@@ -85,6 +116,7 @@ pub(super) fn bind_native_strings(
         prototype: IndexExpression::new(Prefix::from_name(bank), id as f64),
         constant_slot: schema.slot(Field::Constants),
         decoder,
+        formatter: None,
     };
     for external in &mut program.external {
         let mut body = syntax::generated(&format!("return {external}"));
@@ -95,4 +127,25 @@ pub(super) fn bind_native_strings(
             .trim()
             .to_owned();
     }
+}
+
+/// String calls add no persistent wrapper around native stack-sensitive code.
+pub(super) fn bind_fallback_strings(
+    program: &mut Program,
+    block: &mut Block,
+    bank: &str,
+    id: u32,
+    decoder: &str,
+    schema: &Schema,
+    formatter: &str,
+) {
+    let mut bindings = NativeStrings {
+        constants: &mut program.constants,
+        ids: HashMap::new(),
+        prototype: IndexExpression::new(Prefix::from_name(bank), id as f64),
+        constant_slot: schema.slot(Field::Constants),
+        decoder,
+        formatter: Some(formatter),
+    };
+    RuntimeStrings::visit_block(block, &mut bindings);
 }

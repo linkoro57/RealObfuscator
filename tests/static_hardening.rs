@@ -79,6 +79,8 @@ fn every_byte_and_native_bridge_literals_survive_stateful_records_and_cache_vari
         local function values()return {{'{bytes}','','a','ab','abc','abcd','abcde','a long literal that must survive shuffled reconstruction and repeated access'}}end
         local receiver={{}}
         function receiver:identity(value)return value end
+        -- Decoder operations must retain captured builtins after source mutation.
+        bit32={{}}
         for turn=1,3 do
             for _,s in values() do print(digest(s))end
             print(digest(receiver:identity('native bridge argument\000\255\128')))

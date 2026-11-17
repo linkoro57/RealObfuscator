@@ -60,6 +60,17 @@ pub(super) fn descriptor(
             }
             _ => {}
         }
+        let roles = super::wire::operands(opcode);
+        let operands = [words[1], words[2], words[3]];
+        for i in 0..3 {
+            words[roles[i] + 1] = operands[i];
+        }
+        let carry = program.literal_keys.get(&logical).copied().unwrap_or(0);
+        let words = super::wire::encode(
+            words,
+            seed ^ multiplier ^ (physical as u32 + 1) ^ carry,
+            step,
+        );
         let mut record = [0u8; 24];
         for (index, word) in words.iter().enumerate() {
             record[layout[index] * 4..layout[index] * 4 + 4].copy_from_slice(&word.to_le_bytes());
@@ -77,7 +88,6 @@ pub(super) fn descriptor(
             serialized.push(0);
             serialized.extend_from_slice(&record);
         }
-        let carry = program.literal_keys.get(&logical).copied().unwrap_or(0);
         let serialized = crate::codec::encode(
             &serialized,
             seed ^ (physical as u32 + 1) ^ carry,

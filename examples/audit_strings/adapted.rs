@@ -514,7 +514,28 @@ impl<'a> RecordReader<'a> {
         if hash != word(20) {
             return None;
         }
-        let record = self.slots.map(word);
+        // Independent inverse of contextual word feedback. No encoder calls.
+        let mut state = self.seed ^ index as u32 ^ carry;
+        let mut record = self.slots.map(word);
+        for (i, value) in record.iter_mut().enumerate() {
+            let cipher = *value;
+            *value = cipher.rotate_right(state % 31 + 1) ^ state;
+            state = (state.rotate_left(7) ^ cipher)
+                .wrapping_add(self.step)
+                .wrapping_add(i as u32 + 1);
+        }
+        // Return canonical operands for the bounded interpreter, while handlers
+        // in the artifact consume their physical alias-specific operand roles.
+        let [a, b, c] = [record[1], record[2], record[3]];
+        let operands = match record[0] % 6 {
+            0 => [a, b, c],
+            1 => [a, c, b],
+            2 => [b, a, c],
+            3 => [b, c, a],
+            4 => [c, a, b],
+            _ => [c, b, a],
+        };
+        record[1..4].copy_from_slice(&operands);
         if record[4] > self.count as u32 {
             return None;
         }
@@ -688,6 +709,27 @@ mod tests {
     use realobfuscator::{ObfuscationConfig, Obfuscator, ProtectionLevel};
 
     #[test]
+    fn native_fallback_literals_remain_recoverable_without_executing_source() {
+        let source = "local function f()return getfenv(),'native fallback literal with enough bytes to be split into fragments' end;print(f())";
+        let expected = super::super::source_literals(source).unwrap();
+        for recipes in [false, true] {
+            let mut config = ObfuscationConfig::compatible().with_seed(42);
+            config.vm_literal_programs = recipes;
+            let output = Obfuscator::new(config)
+                .obfuscate_with_report(source)
+                .unwrap();
+            assert_eq!(output.report.vm_functions, 0);
+            assert_eq!(output.report.vm_native_literal_prototypes, 1);
+            let result = extract_adapted(&output.code).unwrap();
+            assert!(expected.is_subset(&result.values));
+            assert_eq!(
+                result.vm_rejected + result.bound_rejected + result.graph_rejected,
+                0
+            );
+        }
+    }
+
+    #[test]
     fn recovers_whole_fragments_and_bound_literals_across_formats() {
         let source = r#"
             local function f()
@@ -829,7 +871,13 @@ mod tests {
         struct CorruptInstruction(bool);
         impl NodeProcessor for CorruptInstruction {
             fn process_string_expression(&mut self, string: &mut StringExpression) {
-                if !self.0 && string.get_value().len() > 100 {
+                if !self.0
+                    && string.get_value().len() > 100
+                    && string
+                        .get_value()
+                        .iter()
+                        .any(|byte| !matches!(byte, b' ' | b'\t'))
+                {
                     let mut bytes = string.get_value().to_vec();
                     bytes[1] ^= 1;
                     *string = StringExpression::from_value(bytes);

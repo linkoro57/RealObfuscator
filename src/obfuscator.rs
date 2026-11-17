@@ -53,6 +53,8 @@ pub struct ObfuscationReport {
     pub vm_iteration_bridges: usize,
     pub vm_closure_bridges: usize,
     pub vm_bound_strings: usize,
+    pub vm_native_bound_strings: usize,
+    pub vm_native_literal_prototypes: usize,
     pub vm_literal_instructions: usize,
     pub vm_unbound_string_references: usize,
     pub vm_fallback_reasons: BTreeMap<String, usize>,
@@ -192,6 +194,9 @@ impl Obfuscator {
             vm_runner = Some(compiler.runner().to_owned());
             RuntimeVisitor::visit_block(&mut block, &mut compiler);
             compiler.compile_chunk(&mut block);
+            compiler
+                .bind_fallback_strings(&mut block)
+                .map_err(|reason| ObfuscationError(reason.into()))?;
             compiler.finish()
         } else {
             (Block::default(), Block::default())
@@ -257,7 +262,7 @@ impl Obfuscator {
     fn check_vm_coverage(&self, report: &ObfuscationReport) -> Result<(), ObfuscationError> {
         if self.config.require_bound_strings && report.vm_unbound_string_references != 0 {
             return Err(ObfuscationError(format!(
-                "{} runtime string references remain outside prototype-bound VM constants (native bodies or protocol bridges)",
+                "{} runtime string references remain outside prototype-bound VM constants (native bodies or protocol bridges). Use the Compatible preset (--mode compatible) to allow native fallbacks with bound literals, or inspect VM fallback reasons with --mode vm --stats",
                 report.vm_unbound_string_references
             )));
         }
@@ -269,13 +274,13 @@ impl Obfuscator {
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(ObfuscationError(format!(
-                "{} functions require native fallback ({reasons})",
+                "{} functions require native fallback ({reasons}). Use the Compatible preset (--mode compatible) to retain native functions with bound literals",
                 report.vm_native_functions
             )));
         }
         if self.config.require_chunk_vm && report.vm_chunks == 0 {
             return Err(ObfuscationError(format!(
-                "main chunk requires native fallback ({})",
+                "main chunk requires native fallback ({}). Use the Compatible preset (--mode compatible) to retain native code with bound literals",
                 report
                     .vm_chunk_fallback
                     .as_deref()
@@ -330,7 +335,7 @@ impl Obfuscator {
     fn render(&self, block: Block, tokens: &[Token]) -> Result<String, ObfuscationError> {
         let body = syntax::generate(&block, self.config.minify);
         // Reparse the final artifact so generator/transform defects fail before writing.
-        syntax::parse(&body)
+        let validated_body = syntax::parse(&body)
             .map_err(|e| ObfuscationError(format!("generated output failed validation: {e}")))?;
         let mut code = String::from("--!nocheck\n--!nolint\n");
         for token in tokens
@@ -360,7 +365,10 @@ impl Obfuscator {
                 }
             }
         }
+        code.push_str(&crate::watermark::stamp(&validated_body));
         code.push_str(&body);
+        syntax::parse(&code)
+            .map_err(|e| ObfuscationError(format!("watermarked output failed validation: {e}")))?;
         Ok(code)
     }
 }

@@ -16,7 +16,10 @@ pub(super) fn runtime(
         let mut handlers = Vec::new();
         for (op, ids) in codes {
             for id in ids {
-                handlers.push((*id, handler(op, nested_execution, config.vm_bind_strings)));
+                handlers.push((
+                    *id,
+                    alias_handler(op, *id, nested_execution, config.vm_bind_strings),
+                ));
             }
         }
         handlers.sort_unstable_by_key(|(id, _)| *id);
@@ -66,6 +69,15 @@ pub(super) fn runtime(
         source = source.replace(placeholder, &test);
     }
     source = source.replace("__RUNNER__", runner);
+    // Unroll without allocating another record table on the rolling path.
+    let mut words = String::from("local state=xorValue(seed,index,recipeState or 0)\n");
+    for i in 1..=5 {
+        words.push_str(&format!(
+            "local cipher{i}=word(slot{i});local value{i}=xorValue(rotateRight(cipher{i},state%31+1),state);state=(xorValue(rotateLeft(state,7),cipher{i})+step+{i})%4294967296;\n"
+        ));
+    }
+    words.push_str("return value1,value2,value3,value4,value5");
+    source = source.replace("__WORD_DECODER__", &words);
     source = schema.apply(source);
     source = source.replace(
         "__PACKED__",
@@ -123,6 +135,26 @@ fn constant(index: &str, bind_strings: bool) -> String {
         String::new()
     };
     format!("local value=values[{index}];if value==nil then value=factories[{index}]({arguments});values[{index}]=if value==nil then nilValue else value elseif value==nilValue then value=nil end;")
+}
+
+fn alias_handler(op: &Op, opcode: u32, nested: bool, bound: bool) -> String {
+    let names = super::wire::operands(opcode).map(|slot| ["a", "b", "c"][slot]);
+    // Replace complete identifiers only; temporaries such as `cells` stay intact.
+    handler(op, nested, bound)
+        .split_inclusive(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .map(|token| {
+            let end = token
+                .trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .len();
+            let name = match &token[..end] {
+                "a" => names[0],
+                "b" => names[1],
+                "c" => names[2],
+                _ => return token.to_owned(),
+            };
+            format!("{name}{}", &token[end..])
+        })
+        .collect()
 }
 
 fn handler(op: &Op, nested_execution: bool, bind_strings: bool) -> String {

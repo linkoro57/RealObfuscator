@@ -8,6 +8,13 @@ local function decodeBound(context,index,entry)
     while pc~=0 and budget>0 do
         budget-=1
         local op,a,b,c,nextPc=decode(pc,state)
+        -- Recipe handlers share semantics; normalize the alias-specific roles.
+        local roles=op%6
+        if roles==1 then b,c=c,b
+        elseif roles==2 then a,b=b,a
+        elseif roles==3 then a,b,c=b,c,a
+        elseif roles==4 then a,b,c=c,a,b
+        elseif roles==5 then a,c=c,a end
         pc=nextPc
         if __LITERAL_START__ then
             if state~=nil or b~=index then fail() end

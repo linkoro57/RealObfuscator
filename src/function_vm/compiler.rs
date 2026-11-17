@@ -26,6 +26,7 @@ enum Location {
 /// A complete candidate, published only after its entire body compiles.
 /// Registers are one-based; branch targets remain zero-based logical offsets.
 /// The final empty return makes every fallthrough target valid before relocation.
+#[derive(Default)]
 pub(super) struct Program {
     pub code: Vec<Instruction>,
     pub constants: Vec<Expression>,
@@ -395,7 +396,10 @@ impl Compiler {
                         }
                         InterpolationSegment::Value(segment) => {
                             format.extend_from_slice(b"%*");
-                            values.push(segment.get_expression().clone());
+                            // Interpolations never expand a final call or vararg.
+                            values.push(
+                                ParentheseExpression::new(segment.get_expression().clone()).into(),
+                            );
                         }
                     }
                 }

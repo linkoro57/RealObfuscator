@@ -40,6 +40,7 @@ when emitting output or allocating random identifiers.
 | `instruction.rs` | Logical instruction vocabulary |
 | `literal_programs.rs` / `literal_programs.luau` | Shuffled literal recipes and state-dependent record decoding |
 | `encoding.rs` | Physical placement, branch relocation, compression and record encoding |
+| `wire.rs` | Alias-specific operand roles and contextual word feedback |
 | `schema.rs` | Named descriptor fields and their randomized Luau table slots |
 | `runtime.rs` / `runtime.luau` / `invocation.luau` | Interpreter factory and invocation generation |
 
@@ -65,6 +66,17 @@ instruction offsets until serialization. Physical record positions are one-based
 with zero reserved for termination. A record has five 32-bit little-endian words
 and a four-byte checksum. Physical layout, relocation and encoding must agree with
 the interpreter; runtime-equivalence and corruption tests cover that contract.
+
+Before word serialization, each opcode alias assigns logical a/b/c operands to
+its own physical roles. Aliases of one operation use distinct permutations. The
+generated handler directly uses those roles, including branch operands and native
+bridge arguments. Literal handlers normalize roles before interpreting recipes.
+Next, all five words (including opcode and successor) are masked with rotating
+32-bit feedback derived from prototype seed/salt, physical position and optional
+recipe state. The checksum covers these transformed words. The decoder verifies
+that checksum, reverses word feedback, and returns alias-specific operands.
+All arithmetic uses wrapping u32 operations or exactly representable Luau sums.
+The independent audit reverses both layers before its bounded interpretation.
 
 Literal recipes append unreachable-from-main records after the compiler's final
 return. Each factory points to a relocated recipe entry. The writer latches the

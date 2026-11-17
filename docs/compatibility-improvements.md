@@ -4,6 +4,35 @@ This update fixes observed frontend and runtime mismatches. It does not establis
 complete Lua compatibility or stronger confidentiality of obfuscated strings.
 The runtime target remains Luau.
 
+## Native fallbacks with bound literals
+
+`--mode compatible` / `ObfuscationConfig::compatible()` retain the maximal
+literal/VM configuration and permit native chunk/function fallbacks. Literals
+remaining in those bodies use a dedicated literal-only prototype with the same
+bound envelopes or instruction-linked recipes. This addresses strict string
+coverage errors caused by environment/stack introspection without compiling or
+wrapping the affected functions. Native interpolations use captured `string.format`
+with `%*`, preserving argument evaluation before conversion and escaping `%`.
+Binary/empty strings, shorthand calls and method arguments follow the same path.
+Interpolation values are adjusted to one result before formatting. A final call
+with no returns or an empty vararg becomes `nil`; extra return values do not
+expand into the format call. This fixes native/lightweight and VM string backends.
+
+`vm_native_bound_strings` counts unique literals in these auxiliary prototypes;
+`vm_native_literal_prototypes` reports their number. They do not increment
+`vm_functions` or `vm_chunks`. Native fallback warnings remain visible, and
+Hardened continues to reject uncovered source bodies. The Compatible preset is
+available in the browser and exposes the native-string-binding toggle in advanced
+settings. Strict coverage errors now suggest the compatible alternative.
+
+`tests/native_literals.rs` compares original/generated Luau across recipe/envelope
+and packed/cached variants. It exercises `setfenv` on functions with isolated
+environments, `debug.info(1, 'f')` identity, binary literals, interpolation side
+effects and mixed compiled/native method bridges. Input scripts supplied for
+diagnosis are parsed/obfuscated separately; loading external game scripts is not
+part of this differential suite. Native source structure remains statically
+inspectable, and the independent string extractor remains applicable.
+
 ## Corrected behavior
 
 - Windows CRLF input no longer breaks `\z` escapes or escaped interpolation

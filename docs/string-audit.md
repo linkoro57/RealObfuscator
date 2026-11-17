@@ -5,9 +5,24 @@ The default extractor now reconstructs the scattered VM graph, decodes
 `--pool-only` for the unchanged original extraction algorithm. The original source
 is still optional and is read only after extraction to measure exact byte coverage.
 
+## Contextual instruction words, 2026-11-17
+
+VM records now additionally transform all five words through position-dependent
+rotate/XOR/add feedback and assign distinct operand permutations to opcode aliases.
+The current audit independently reverses word feedback, normalizes operand roles,
+and then follows the existing bounded literal interpreter. Regression fixtures
+continue to require full source-literal recovery across seeds, payload formats,
+bound recipes and native bridges. They do not establish recovery of arbitrary
+source control flow or measure analyst effort.
+
+The timings and artifact hashes below describe earlier formats. No new recovery
+time or resistance claim is assigned to this layer. The current reader targets
+the revised VM wire format; use the corresponding repository revision to inspect
+historical VM artifacts. Pool-only extraction remains unchanged.
+
 ## Adapted extraction, 2026-11-16
 
-### Current instruction-linked literal programs
+### Instruction-linked literal programs at that revision
 
 The current Hardened preset replaces standalone bound payloads with
 [instruction-linked literal programs](static-hardening.md). The independent audit

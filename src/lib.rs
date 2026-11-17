@@ -30,7 +30,9 @@ pub mod obfuscator;
 pub mod rng;
 mod source;
 mod syntax;
+pub mod watermark;
 pub use source::decode_source_bytes;
+pub use watermark::{detect_watermark, WatermarkDetection};
 
 pub use config::{
     DeadCodeDensity, ObfuscationConfig, ProtectionLevel, StringDecodeMode, VmHardening,

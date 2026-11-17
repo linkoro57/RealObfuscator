@@ -132,6 +132,7 @@ valuable authoritative logic on the server.
 | `native` | Rename, lazy string decoding with integrity checks, runtime integer expressions, property indirection, randomized control-flow dispatch and decoy handlers. |
 | `vm` | Register-bytecode compilation for supported chunks/functions; captured-variable cells; randomized physical records, operand layouts and opcode aliases; constant fusion; incremental decoding and record integrity. Remaining compatible statement regions use conservative dispatch. |
 | `hardened` | Maximal VM settings with instruction-linked, prototype-bound strings and strict chunk/function/string coverage; uncovered runtime strings fail before output is replaced. |
+| `compatible` | Maximal VM/literal settings where supported, with native function/chunk fallbacks and prototype-bound strings in those fallbacks. Stack/environment introspection stays native; coverage warnings remain visible. |
 
 The register-bytecode backend supports main chunks and functions, captured-variable
 cells, shuffled instruction records, opcode aliases, fused operations, lazy
@@ -165,7 +166,21 @@ an adapted extractor or runtime instrumentation:
 ```sh
 realobfuscator script.luau --mode hardened --stats
 realobfuscator script.luau --mode vm --vm-bound-strings --stats
+
+# Preserve native stack/environment behavior while binding all runtime strings.
+realobfuscator script.luau --mode compatible --stats
 ```
+
+Use `compatible` when `getfenv`, `setfenv`, `debug` or other unsupported constructs
+cause native fallbacks. It binds remaining native literals through a separate
+literal-only prototype, including interpolations and shorthand calls, without
+wrapping their surrounding functions. The report distinguishes
+`vm_native_bound_strings` and `vm_native_literal_prototypes` from compiled source
+functions/chunks. A script containing environment introspection may have zero
+compiled functions and still have all its runtime strings bound. This is partial
+virtualization with protected native literals; native code remains available to
+static analysis. Hardened retains strict coverage rather than switching profiles
+automatically.
 
 ```sh
 # Reproducible development build
@@ -197,6 +212,13 @@ realobfuscator --help-all
 Release builds use operating-system randomness. An explicit seed produces identical output across processes for the same input and configuration, and different source modules derive different random streams from that seed. Do not use fixed development seeds for diversified releases.
 
 `basic`, `client-max` and `max` emit respectively two, three and four opcode aliases per used register operation. Each compiled chunk/function receives a new physical record order, operand-word layout and encoding parameters. Packed mode uses per-record RLE when it reduces size, followed by 32-bit feedback encoding. Rolling mode decodes records as needed; cached mode decodes and retains the records for faster execution. Maximum hardening keeps constants in an invocation-local cache rather than a shared plaintext prototype cache. These choices have significant size and execution costs; lightweight remains the default profile.
+
+Opcode aliases use distinct operand permutations. All five instruction words,
+including opcode and successor, receive additional rotate/XOR/add feedback tied
+to prototype parameters, record position and literal recipe state where used.
+The static audit independently reverses these layers; they add reconstruction
+steps and decoding cost without providing literal confidentiality. See
+[the wire-format details and limits](docs/static-hardening.md).
 
 ## Compatibility and behavior
 
@@ -298,5 +320,19 @@ implemented techniques, native bridges and unknown/private features.
 There is no benchmark demonstrating superiority to Luraph, minimum reverse-engineering time, or resistance to dedicated devirtualizers. The research inventory explicitly records private or platform-specific mechanisms that have not been reproduced. Independent adversarial evaluation and Roblox compatibility/performance testing remain necessary.
 
 ## License
+
+New outputs include an unobtrusive watermark inside a whitespace-valued string
+literal, independently of the visible attribution comment. The website's
+**Identify a script** tool accepts pasted code or a UTF-8 file (up to 8 MiB),
+parses it locally and distinguishes a matching embedded marker, a changed marker,
+a legacy header alone and no recognized evidence. Scripts are never executed or
+uploaded. Matching checks normalize comments and formatting; code rewrites may
+break the match. Public markers are removable/forgeable and do not prove origin
+or authorship. Old unmarked output may remain unrecognized.
+
+Please preserve the visible RealObfuscator attribution header when sharing
+generated scripts. [Attribution and legal notices](NOTICE.md) distinguish that
+request from GPL obligations when redistributing covered material. The GNU GPL
+text remains unmodified; no blanket ban on removing all output comments is added.
 
 [GNU General Public License v3.0](LICENSE). Third-party Rust dependencies retain their respective licenses.

@@ -125,6 +125,8 @@ pub struct ObfuscationConfig {
     pub vm_bind_strings: bool,
     /// Reconstruct bound literals through shuffled VM instruction recipes.
     pub vm_literal_programs: bool,
+    /// Bind literals in native fallbacks through a separate literal-only prototype.
+    pub vm_native_string_fallback: bool,
     /// Reject runtime string references left outside compiled VM constants.
     pub require_bound_strings: bool,
     pub require_function_vm: bool,
@@ -174,6 +176,7 @@ impl Default for ObfuscationConfig {
             vm_scatter_data: false,
             vm_bind_strings: false,
             vm_literal_programs: false,
+            vm_native_string_fallback: false,
             require_bound_strings: false,
             require_function_vm: false,
             require_chunk_vm: false,
@@ -201,6 +204,15 @@ impl Default for ObfuscationConfig {
 }
 
 impl ObfuscationConfig {
+    /// Preserve native fallbacks while requiring prototype-bound runtime strings.
+    pub fn compatible() -> Self {
+        let mut config = Self::hardened();
+        config.require_function_vm = false;
+        config.require_chunk_vm = false;
+        config.vm_native_string_fallback = true;
+        config
+    }
+
     /// Strict VM coverage with prototype-bound literals. This increases extraction
     /// work, but does not establish confidentiality against a client-side analyst.
     pub fn hardened() -> Self {
@@ -262,6 +274,9 @@ impl ObfuscationConfig {
     }
 
     pub(crate) fn validated_options(&self) -> Result<ValidatedOptions, String> {
+        if self.vm_native_string_fallback && !self.vm_bind_strings {
+            return Err("vm_native_string_fallback requires prototype-bound strings".into());
+        }
         if self.vm_scatter_data && !self.virtualize {
             return Err("vm_scatter_data requires VM mode".into());
         }
@@ -271,9 +286,12 @@ impl ObfuscationConfig {
         if self.vm_literal_programs && (!self.vm_bind_strings || !self.anti_tamper) {
             return Err("vm_literal_programs requires bound strings and integrity checks".into());
         }
-        if self.require_bound_strings && (!self.vm_bind_strings || !self.virtualize_chunk) {
+        if self.require_bound_strings
+            && (!self.vm_bind_strings
+                || (!self.virtualize_chunk && !self.vm_native_string_fallback))
+        {
             return Err(
-                "require_bound_strings requires prototype-bound strings and chunk compilation"
+                "require_bound_strings requires prototype-bound strings and chunk compilation or native string binding"
                     .into(),
             );
         }

@@ -392,7 +392,11 @@ impl NodePostProcessor for Constants<'_> {
                         }
                         InterpolationSegment::Value(segment) => {
                             format.extend_from_slice(b"%*");
-                            arguments.push(segment.get_expression().clone());
+                            // A final call/vararg must supply exactly one value;
+                            // zero returns become nil instead of a missing format argument.
+                            arguments.push(
+                                ParentheseExpression::new(segment.get_expression().clone()).into(),
+                            );
                         }
                     }
                 }

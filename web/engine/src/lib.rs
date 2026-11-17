@@ -23,6 +23,7 @@ pub struct Settings {
     vm_scatter_data: Option<bool>,
     vm_bind_strings: Option<bool>,
     vm_literal_programs: Option<bool>,
+    vm_native_string_fallback: Option<bool>,
     require_bound_strings: Option<bool>,
     require_function_vm: Option<bool>,
     require_chunk_vm: Option<bool>,
@@ -57,6 +58,7 @@ impl Settings {
             "native" => ObfuscationConfig::default().with_level(ProtectionLevel::Maximum),
             "vm" => ObfuscationConfig::default().with_level(ProtectionLevel::Paranoid),
             "hardened" => ObfuscationConfig::hardened(),
+            "compatible" => ObfuscationConfig::compatible(),
             _ => return Err("Unknown preset".into()),
         };
         if let Some(seed) = self.seed.filter(|s| !s.trim().is_empty()) {
@@ -83,6 +85,7 @@ impl Settings {
             vm_scatter_data,
             vm_bind_strings,
             vm_literal_programs,
+            vm_native_string_fallback,
             require_bound_strings,
             require_function_vm,
             require_chunk_vm,
@@ -155,6 +158,7 @@ pub fn run(source: &str, json: &str) -> Result<String, String> {
         "vm_iteration_bridges":r.vm_iteration_bridges,"vm_closure_bridges":r.vm_closure_bridges,
         "vm_bound_strings":r.vm_bound_strings,"vm_unbound_string_references":r.vm_unbound_string_references,
         "vm_literal_instructions":r.vm_literal_instructions,
+        "vm_native_bound_strings":r.vm_native_bound_strings,"vm_native_literal_prototypes":r.vm_native_literal_prototypes,
         "vm_scattered_tables":r.vm_scattered_tables,"vm_scattered_entries":r.vm_scattered_entries,
         "vm_chunk_fallback":r.vm_chunk_fallback,"vm_fallback_reasons":r.vm_fallback_reasons
     });
@@ -176,9 +180,59 @@ pub fn decode_source(bytes: &[u8]) -> Result<String, JsValue> {
     realobfuscator::decode_source_bytes(bytes).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+#[wasm_bindgen]
+pub fn identify(source: &str) -> Result<String, JsValue> {
+    identify_script(source).map_err(|e| JsValue::from_str(&e))
+}
+
+pub fn identify_script(source: &str) -> Result<String, String> {
+    let result = realobfuscator::detect_watermark(source).map_err(|e| e.0)?;
+    serde_json::to_string(&serde_json::json!({
+        "status": result.status(), "visible_header": result.visible_header,
+        "embedded_watermark": result.embedded_watermark, "content_matches": result.content_matches,
+        "authenticated": false
+    }))
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn detector_recognizes_output_without_executing_it() {
+        let output = Obfuscator::new(ObfuscationConfig::lightweight().with_seed(42))
+            .obfuscate("error('must never execute')")
+            .unwrap();
+        let report: serde_json::Value =
+            serde_json::from_str(&identify_script(&output).unwrap()).unwrap();
+        assert_eq!(report["status"], "matching_watermark");
+        assert_eq!(report["authenticated"], false);
+        assert_eq!(report["content_matches"], true);
+        assert!(identify_script("local =").is_err());
+    }
+    #[test]
+    fn compatible_binds_native_literals_and_reports_actual_coverage() {
+        let source = "local function f()return getfenv(),'native fallback literal' end;print(f())";
+        let options = r#"{"preset":"compatible","seed":"42"}"#;
+        let value: serde_json::Value =
+            serde_json::from_str(&run(source, options).unwrap()).unwrap();
+        assert_eq!(value["report"]["vm_chunks"], 0);
+        assert_eq!(value["report"]["vm_functions"], 0);
+        assert_eq!(value["report"]["vm_native_literal_prototypes"], 1);
+        assert!(value["report"]["vm_native_bound_strings"].as_u64().unwrap() > 0);
+        assert_eq!(value["report"]["vm_unbound_string_references"], 0);
+        assert!(!value["warnings"].as_array().unwrap().is_empty());
+        assert_eq!(
+            value["code"],
+            Obfuscator::new(ObfuscationConfig::compatible().with_seed(42))
+                .obfuscate(source)
+                .unwrap()
+        );
+        assert!(run(source, r#"{"preset":"hardened"}"#)
+            .unwrap_err()
+            .contains("Compatible preset"));
+    }
+
     #[test]
     fn bridge_matches_native_pipeline_and_keeps_u64_seeds_exact() {
         let source = "local n=17;return n,'hello'";

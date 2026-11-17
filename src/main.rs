@@ -16,7 +16,7 @@ const HELP: &str = "Usage: realobfuscator [OPTIONS] <SOURCE>
 
 Options:
   -o, --output <PATH>       Output file or directory
-      --mode <MODE>         lightweight (default), rename, native, vm, or hardened
+      --mode <MODE>         lightweight (default), rename, native, vm, compatible, or hardened
                             vm compiles supported functions to register bytecode
       --require-function-vm Fail if a function needs native fallback (VM mode)
       --require-chunk-vm    Fail if the main chunk needs native fallback
@@ -236,7 +236,8 @@ fn config(args: &Args) -> ObfuscationConfig {
         Some("native") => ObfuscationConfig::default().with_level(ProtectionLevel::Maximum),
         Some("vm") => ObfuscationConfig::default().with_level(ProtectionLevel::Paranoid),
         Some("hardened") => ObfuscationConfig::hardened(),
-        Some(_) => usage("mode must be lightweight, rename, native, vm, or hardened"),
+        Some("compatible") => ObfuscationConfig::compatible(),
+        Some(_) => usage("mode must be lightweight, rename, native, vm, compatible, or hardened"),
         None => {
             if let Some(level) = args.level {
                 ObfuscationConfig::default()
@@ -370,6 +371,12 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
                         "  VM bound strings: {}; unbound runtime string references: {}",
                         report.vm_bound_strings, report.vm_unbound_string_references
                     );
+                    if report.vm_native_literal_prototypes != 0 {
+                        println!(
+                            "  native fallback bound strings: {}; literal-only prototypes: {}",
+                            report.vm_native_bound_strings, report.vm_native_literal_prototypes
+                        );
+                    }
                 }
                 println!("  bindings: {}; strings: {} ({} references); numbers: {}; fields: {}; dispatch regions: {}; VM statements: {}; decoys: {}; predicates: {}; integrity checks: {}",
                     report.renamed_bindings, report.encrypted_strings, report.string_references, report.obfuscated_numbers,

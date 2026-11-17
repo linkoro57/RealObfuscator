@@ -11,6 +11,7 @@ mod literals;
 mod runtime;
 mod scatter;
 mod schema;
+mod wire;
 
 use self::{compiler::Program, instruction::Op, runtime::runtime, schema::Schema};
 use crate::{
@@ -81,6 +82,7 @@ pub(crate) struct FunctionVm<'a> {
     programs: Vec<(u32, Program)>,
     schema: Schema,
     decoder: String,
+    native_formatter: String,
     environment_sensitive: bool,
 }
 
@@ -107,6 +109,11 @@ impl<'a> FunctionVm<'a> {
         } else {
             String::new()
         };
+        let native_formatter = if config.vm_native_string_fallback {
+            names.fresh()
+        } else {
+            String::new()
+        };
         Self {
             config,
             hardening,
@@ -117,8 +124,50 @@ impl<'a> FunctionVm<'a> {
             programs: Vec::new(),
             schema,
             decoder,
+            native_formatter,
             environment_sensitive,
         }
+    }
+    /// Protect literals without compiling or wrapping the surrounding native code.
+    pub fn bind_fallback_strings(&mut self, block: &mut Block) -> Result<(), &'static str> {
+        if !self.config.vm_native_string_fallback {
+            return Ok(());
+        }
+        let id = loop {
+            let id = self.names.rng.range(1, 1 << 24) as u32;
+            if self.programs.iter().all(|(existing, _)| *existing != id) {
+                break id;
+            }
+        };
+        let mut program = Program::default();
+        // A valid entry for legacy bound envelopes; this is never a source body.
+        program.code.push(instruction::Instruction {
+            op: Op::Signal,
+            a: 0,
+            b: 0,
+            c: 0,
+        });
+        literals::bind_fallback_strings(
+            &mut program,
+            block,
+            &self.bank,
+            id,
+            &self.decoder,
+            &self.schema,
+            &self.native_formatter,
+        );
+        if program.constants.is_empty() {
+            return Ok(());
+        }
+        if self.config.vm_literal_programs {
+            self.report.vm_literal_instructions +=
+                literal_programs::prepare(&mut program, &mut self.names.rng)?;
+        }
+        self.report.vm_native_bound_strings += program.constants.len();
+        self.report.vm_native_literal_prototypes += 1;
+        self.report.vm_instructions += program.code.len();
+        self.programs.push((id, program));
+        Ok(())
     }
     fn compile(
         &mut self,
@@ -271,10 +320,13 @@ impl<'a> FunctionVm<'a> {
         let mut codes = BTreeMap::<Op, Vec<u32>>::new();
         for op in ops {
             let mut ids = Vec::new();
+            let mut roles = BTreeSet::new();
             for _ in 0..aliases {
                 let id = loop {
                     let id = self.names.rng.range(257, 65536) as u32;
-                    if taken.insert(id) {
+                    if !taken.contains(&id) && !roles.contains(&(id % 6)) {
+                        taken.insert(id);
+                        roles.insert(id % 6);
                         break id;
                     }
                 };
@@ -335,11 +387,19 @@ impl<'a> FunctionVm<'a> {
             self.hardening,
             &self.decoder,
         );
+        let runtime = if self.config.vm_native_string_fallback {
+            format!("local {}=string.format;{runtime}", self.native_formatter)
+        } else {
+            runtime
+        };
         let mut runtime = syntax::generated(&runtime);
         let mut renamer = Renamer::new(self.names);
         renamer.preserve_name(&self.runner);
         if self.config.vm_bind_strings {
             renamer.preserve_name(&self.decoder);
+        }
+        if self.config.vm_native_string_fallback {
+            renamer.preserve_name(&self.native_formatter);
         }
         ScopeVisitor::visit_block(&mut runtime, &mut renamer);
         (bank, runtime)
