@@ -72,6 +72,7 @@ pub struct Context {
     pub recipe_handlers: BTreeMap<u32, super::recipes::Kind>,
     pub recipe_records: RefCell<RecordCache>,
     pub recipe_steps: Cell<usize>,
+    pub recipe_memory_steps: Cell<usize>,
 }
 
 // Keep the owning table alive so its pointer cannot be reused by another graph.

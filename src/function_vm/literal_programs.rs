@@ -7,6 +7,26 @@ use super::{
 use crate::rng::Rng;
 use darklua_core::nodes::Expression;
 
+// Per-literal scratch state. Public deterministic inputs, not secret key material.
+fn memory(state: u32) -> [u32; 8] {
+    std::array::from_fn(|i| {
+        (state ^ (i as u32 + 1).wrapping_mul(0x9E37_79B9)).rotate_left((i as u32 + 1) * 3)
+    })
+}
+
+fn mix(state: u32, memory: &mut [u32; 8], a: u32, b: u32, c: u32) -> u32 {
+    let slot = (state & 7) as usize;
+    let previous = memory[slot];
+    let value = state ^ previous;
+    let low = value & 65535;
+    // A 16-bit product keeps the corresponding Luau double arithmetic exact.
+    let product = (low * ((a & 65535) | 1) + (a >> 16)) & 65535;
+    let round = (low << 16) | ((value >> 16) ^ product);
+    let next = round.rotate_left(b) ^ c;
+    memory[slot] = previous.rotate_left(11).wrapping_add(next) ^ a;
+    next
+}
+
 pub(super) fn prepare(program: &mut Program, rng: &mut Rng) -> Result<usize, &'static str> {
     let first = program.code.len();
     for (index, constant) in program.constants.iter().enumerate() {
@@ -19,6 +39,7 @@ pub(super) fn prepare(program: &mut Program, rng: &mut Rng) -> Result<usize, &'s
         let entry = u32::try_from(program.code.len()).map_err(|_| "instruction limit")?;
         program.literal_entries.insert(index, entry);
         let mut state = rng.next_u64() as u32;
+        let mut memory = memory(state);
         program.code.push(Instruction {
             op: Op::LiteralStart,
             a: state,
@@ -30,12 +51,16 @@ pub(super) fn prepare(program: &mut Program, rng: &mut Rng) -> Result<usize, &'s
         for word in order {
             // The emitted byte order differs from the execution order. Each word
             // consumes the prior state, including prior ciphertext feedback.
-            for _ in 0..rng.range(1, 3) {
+            for round in 0..rng.range(1, 3) {
                 program.literal_keys.insert(program.code.len(), state);
                 let a = rng.next_u64() as u32;
                 let b = rng.range(1, 32) as u32;
                 let c = rng.next_u64() as u32;
-                let op = if rng.range(0, 2) == 0 {
+                let variant = rng.range(0, 2);
+                let op = if round == 0 {
+                    state = mix(state, &mut memory, a, b, c);
+                    Op::LiteralMix
+                } else if variant == 0 {
                     state = (state ^ a).rotate_left(b).wrapping_add(c);
                     Op::LiteralXor
                 } else {
@@ -76,4 +101,22 @@ pub(super) fn prepare(program: &mut Program, rng: &mut Rng) -> Result<usize, &'s
         });
     }
     Ok(program.code.len() - first)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equal_scalar_states_require_the_selected_memory_word() {
+        for state in [0, 1, 2, 3, 4, 5, 6, 7, 0x8000_0000, u32::MAX] {
+            let mut first = memory(state);
+            let mut second = first;
+            second[(state & 7) as usize] ^= 0x8000_0000;
+            assert_ne!(
+                mix(state, &mut first, u32::MAX, 31, 0x8000_0000),
+                mix(state, &mut second, u32::MAX, 31, 0x8000_0000)
+            );
+        }
+    }
 }

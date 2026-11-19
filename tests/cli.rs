@@ -168,6 +168,38 @@ fn compatible_mode_binds_native_literals_without_claiming_full_vm_coverage() {
 }
 
 #[test]
+fn optimize_flag_is_explicit_reported_and_can_be_disabled() {
+    let dir = temp_dir();
+    let input = dir.join("input.luau");
+    let output = dir.join("output.luau");
+    fs::write(&input, "local n=2+3;if false then n+=17 end;return n").unwrap();
+    let invoke = |options: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_realobfuscator"))
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .args(["--seed", "42", "--stats"])
+            .args(options)
+            .output()
+            .unwrap()
+    };
+    let baseline = invoke(&[]);
+    assert!(baseline.status.success());
+    assert!(String::from_utf8_lossy(&baseline.stdout)
+        .contains("source optimization: false; expressions simplified: 0"));
+    let original = fs::read(&output).unwrap();
+    let optimized = invoke(&["--optimize"]);
+    assert!(optimized.status.success());
+    assert!(String::from_utf8_lossy(&optimized.stdout)
+        .contains("source optimization: true; expressions simplified: 1; branches removed: 1"));
+    assert_ne!(fs::read(&output).unwrap(), original);
+    let disabled = invoke(&["--optimize", "--no-optimize"]);
+    assert!(disabled.status.success());
+    assert_eq!(fs::read(&output).unwrap(), original);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn cli_obfuscates_a_file_and_is_reproducible() {
     let dir = temp_dir();
     let input = dir.join("input.luau");

@@ -4,6 +4,7 @@ const number = (key, label, min, max, help = '') => ({ key, label, min, max, hel
 const select = (key, label, values, help = '') => ({ key, label, values, help, type: 'select' });
 export const groups = [
   { title: 'Transformations', fields: [
+    toggle('optimize_code', 'Optimize code', 'Simplifies literal expressions and removes unreachable branches before obfuscation. Keeps calls and evaluation order; performance gains depend on the script.'),
     toggle('rename_identifiers', 'Rename local bindings'),
     toggle('encrypt_strings', 'Encode strings'),
     toggle('split_strings', 'Split long strings', 'Applied to strings of at least 32 bytes when string encoding is enabled.'),
@@ -20,7 +21,7 @@ export const groups = [
     toggle('vm_scatter_data', 'Scatter VM tables', 'Increases output size and load cost.'),
     toggle('vm_bind_strings', 'Bind strings to prototypes'),
     toggle('vm_native_string_fallback', 'Bind strings in native fallbacks', 'Protects literals while retaining native function bodies and stack/environment behavior. Requires prototype-bound strings.'),
-    toggle('vm_literal_programs', 'Reconstruct strings through VM instructions', 'Replaces standalone literal payloads with stateful, shuffled recipes. Requires bound strings and integrity checks; increases size and runtime cost.'),
+    toggle('vm_literal_programs', 'Reconstruct strings through VM instructions', 'Uses shuffled recipes with state-dependent scratch memory. Requires bound strings and integrity checks; increases size and runtime cost. This does not guarantee secrecy.'),
     toggle('vm_pack_bytecode', 'Pack bytecode'),
     toggle('vm_pack_constants', 'Pack constants'),
     toggle('vm_predecode_bytecode', 'Cache decoded instructions', 'Faster execution with a retained plaintext instruction cache.'),
@@ -64,6 +65,7 @@ export function defaults(preset) {
   const hardened = preset === 'hardened';
   const bound = hardened || preset === 'compatible';
   return {
+    optimize_code: false,
     rename_identifiers: true, encrypt_strings: preset !== 'rename', split_strings: native,
     cache_strings: !vm, obfuscate_numbers: native, control_flow_flatten: native,
     opaque_predicates: false, inject_dead_code: native, table_indirection: native,

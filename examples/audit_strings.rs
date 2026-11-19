@@ -185,6 +185,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("decoded_bound_strings={}", result.bound_strings);
     println!("decoded_literal_recipes={}", result.recipe_strings);
     println!("interpreted_literal_recipe_steps={}", result.recipe_steps);
+    println!(
+        "interpreted_literal_memory_steps={}",
+        result.recipe_memory_steps
+    );
     println!("rejected_bound_strings={}", result.bound_rejected);
     println!("resolved_concatenations={}", result.concatenations);
     println!("read_parse_decode_ms={:.3}", elapsed.as_secs_f64() * 1000.0);

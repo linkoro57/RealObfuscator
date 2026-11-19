@@ -1,0 +1,12 @@
+<section class="page-heading site-container"><p class="eyebrow">SCRIPT IDENTIFICATION</p><h1>A marker. Not a mystery.</h1><p>Check for RealObfuscator attribution without running the script.</p></section><div class="site-container narrow">  <section class="inline-detector" id="detector-dialog" aria-labelledby="detector-heading">
+    <div class="dialog-header"><div><h2 id="detector-heading">Identify a script</h2><p>Check for RealObfuscator attribution markers. No script is executed or uploaded.</p></div></div>
+    <div class="dialog-body detector-body">
+      <label for="detect-source">Script to inspect</label>
+      <p id="detect-help" class="options-help">Paste code or load a UTF-8 file, up to 8 MiB. A marker can be forged or removed; this check cannot prove who created a script.</p>
+      <textarea id="detect-source" aria-describedby="detect-help" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste the script you found here…"></textarea>
+      <input id="detect-file" type="file" accept=".lua,.luau,.txt,text/plain" hidden>
+      <div id="detect-status" class="detection-result" role="status" aria-live="polite" aria-atomic="true" hidden><h3 id="detect-title"></h3><p id="detect-detail"></p></div>
+    </div>
+    <div class="dialog-footer"><button id="detect-load" class="button" type="button">Load file</button><div class="detector-actions"><button id="detect-cancel" class="button" type="button" hidden>Cancel scan</button><button id="detect-run" class="button primary" type="button">Check script</button></div></div>
+  </section>
+<div class="callout"><h2>What does a match mean?</h2><p>The detector checks a public embedded watermark and the visible attribution header. Markers can be removed, copied or forged, so a match is evidence of a marker, not proof of authorship.</p><a href="./docs.html#identification">Understand the results</a></div></div>

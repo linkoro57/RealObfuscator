@@ -104,6 +104,8 @@ pub enum DeadCodeDensity {
 
 #[derive(Clone, Debug)]
 pub struct ObfuscationConfig {
+    /// Conservatively simplify source literals and unreachable control flow.
+    pub optimize_code: bool,
     pub level: Option<ProtectionLevel>,
     pub rename_identifiers: bool,
     pub encrypt_strings: bool,
@@ -161,6 +163,7 @@ impl Default for ObfuscationConfig {
         let build_id = format!("{:016x}", random.next_u64());
         Self {
             level: None,
+            optimize_code: false,
             rename_identifiers: true,
             encrypt_strings: true,
             split_strings: false,

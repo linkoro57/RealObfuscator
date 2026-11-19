@@ -31,6 +31,37 @@ and reconstruction buffers belong to each decoder invocation.
 The default maximum hardening profile retains its existing invocation-local
 plaintext lifetime. User code can still store or expose returned values.
 
+## Memory-dependent literal reconstruction
+
+Literal programs now keep eight invocation-local scratch words in addition to
+the scalar state. Before emitting each group of up to four bytes, a `LiteralMix`
+record selects a scratch slot using the current state, reads that word, performs
+a 16-bit Feistel-style mixing step with the record operands, and writes an updated
+word back into that slot. The next record's encoding context depends on the result.
+An interpreter of the recipe therefore needs to reproduce the evolving scratch
+memory as well as the previous scalar state and ciphertext feedback.
+
+This replaces one existing arithmetic transition per emitted word, rather than
+adding padding instructions. Empty literals still work without a mixing record.
+Initialization derives the eight words from the literal's initial state; these
+are public values, not 256 bits of secret entropy. The odd 16-bit multiplier,
+16-bit product reduction and 32-bit sums remain exact in Luau's number model.
+The generated code uses captured `bit32` functions and does not add network calls,
+external keys, debug hooks or script/environment checks.
+
+The memory belongs to an individual decoder call. Cached instruction mode still
+excludes state-dependent recipe records, and a subsequent or nested literal call
+starts with a fresh scratch table. More arithmetic, table initialization and
+state-dependent reads/writes increase literal-access work and allocation; the
+instruction count alone does not express this runtime cost.
+
+The source-informed audit independently identifies the indexed memory writes and
+replays the new semantics. Its `interpreted_literal_memory_steps` counter reports
+successfully reconstructed memory-mixing steps. It continues to support the prior
+scalar-only format. See the [current probe](static-resistance-review.md) for the
+before/after evidence. This is an added reconstruction dependency, not encryption
+or a demonstrated minimum analyst recovery time.
+
 ## Configuration and cost
 
 All VM profiles also use contextual word encoding and alias-specific operand

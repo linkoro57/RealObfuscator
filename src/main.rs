@@ -22,6 +22,8 @@ Options:
       --require-chunk-vm    Fail if the main chunk needs native fallback
       --vm-functions-only  Compile functions; retain native main-chunk control flow
       --stats               Show counts of transformations actually applied
+      --optimize            Simplify literal expressions and unreachable branches
+      --no-optimize         Disable source optimization (default)
       --pretty              Format generated code across multiple lines
       --decode <lazy|eager> String decoding strategy
       --keep-types          Preserve Luau type annotations and declarations
@@ -83,6 +85,7 @@ struct Args {
     lightweight: bool,
     rename_only: bool,
     stats: bool,
+    optimize: Option<bool>,
     pretty: bool,
     keep_types: bool,
     wrap_in_iife: bool,
@@ -138,6 +141,8 @@ fn parse() -> Args {
             "--vm" => args.vm = true,
             "-q" | "--quiet" => args.quiet = true,
             "--stats" => args.stats = true,
+            "--optimize" => args.optimize = Some(true),
+            "--no-optimize" => args.optimize = Some(false),
             "--pretty" => args.pretty = true,
             "--keep-types" => args.keep_types = true,
             "--wrap-in-iife" => args.wrap_in_iife = true,
@@ -255,6 +260,9 @@ fn config(args: &Args) -> ObfuscationConfig {
     if let Some(seed) = args.seed {
         config = config.with_seed(seed)
     }
+    if let Some(value) = args.optimize {
+        config.optimize_code = value;
+    }
     if let Some(value) = args.strings {
         config.encrypt_strings = value
     }
@@ -358,6 +366,9 @@ fn one(input: &Path, output: &Path, obfuscator: &Obfuscator, args: &Args) -> boo
                 report.output_bytes
             );
             if args.stats {
+                println!("  source optimization: {}; expressions simplified: {}; branches removed: {}; loops removed: {}; empty blocks removed: {}",
+                    report.optimization_enabled, report.optimized_expressions, report.removed_branches,
+                    report.removed_loops, report.removed_empty_blocks);
                 println!(
                     "  split strings: {}; scattered VM tables: {}; scattered VM entries: {}",
                     report.split_strings, report.vm_scattered_tables, report.vm_scattered_entries

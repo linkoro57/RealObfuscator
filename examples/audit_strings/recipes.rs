@@ -9,6 +9,7 @@ pub enum Kind {
     Start,
     Xor,
     Add,
+    Mix,
     Bytes,
     Return,
 }
@@ -54,6 +55,11 @@ impl NodeProcessor for Handlers {
                 .any(|s| matches!(s, Statement::NumericFor(_)))
             {
                 Kind::Bytes
+            } else if block.iter_statements().any(|statement| {
+                matches!(statement, Statement::Assign(assign) if assign.iter_variables().any(|variable| matches!(variable, Variable::Index(_))))
+            }) {
+                // A state-dependent memory read followed by an indexed write.
+                Kind::Mix
             } else {
                 let assignments: Vec<_> = block
                     .iter_statements()
@@ -114,8 +120,10 @@ pub fn decode(
     let reader = super::adapted::RecordReader::new(prototype, schema)?;
     let mut pc = entry;
     let mut state = None;
+    let mut memory = [0u32; 8];
     let mut out = Vec::new();
     let mut written = 0;
+    let mut memory_steps = 0;
     let mut seen = BTreeSet::new();
     while pc != 0 && seen.len() < code.len() {
         if ctx.recipe_steps.get().saturating_add(seen.len()) > data::MAX_ITEMS * 4 {
@@ -140,6 +148,10 @@ pub fn decode(
                     return None;
                 }
                 state = Some(a ^ seed ^ index.wrapping_mul(65599) ^ entry);
+                for (slot, word) in memory.iter_mut().enumerate() {
+                    *word = (state? ^ (slot as u32 + 1).wrapping_mul(2654435769))
+                        .rotate_left((slot as u32 + 1) * 3);
+                }
                 out.resize(c as usize, None);
             }
             Kind::Xor => {
@@ -171,6 +183,24 @@ pub fn decode(
                 written += count;
                 state = Some((current.rotate_left(9) ^ a).wrapping_add(c));
             }
+            Kind::Mix => {
+                if !(1..=31).contains(&b) {
+                    return None;
+                }
+                let current = state?;
+                let slot = (current % 8) as usize;
+                let previous = memory[slot];
+                let value = current ^ previous;
+                // Independent integer implementation of the emitted 16-bit round.
+                let low = u64::from(value % 65536);
+                let multiplier = u64::from(a % 65536) | 1;
+                let product = ((low * multiplier + u64::from(a / 65536)) % 65536) as u32;
+                let word = ((low as u32) * 65536) + ((value / 65536) ^ product);
+                let next = word.rotate_left(b) ^ c;
+                memory[slot] = previous.rotate_left(11).wrapping_add(next) ^ a;
+                state = Some(next);
+                memory_steps += 1;
+            }
             Kind::Return => {
                 if state.is_none() || c != index || a as usize != out.len() || written != out.len()
                 {
@@ -181,6 +211,8 @@ pub fn decode(
                     return None;
                 }
                 ctx.recipe_steps.set(ctx.recipe_steps.get() + seen.len());
+                ctx.recipe_memory_steps
+                    .set(ctx.recipe_memory_steps.get() + memory_steps);
                 return Some(bytes);
             }
         }

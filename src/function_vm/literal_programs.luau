@@ -1,9 +1,16 @@
 local rotateValue=bit32.lrotate
 local charValue,concatValues=string.char,table.concat
+local function newLiteralMemory(state)
+    local memory=createTable(8)
+    for i=1,8 do
+        memory[i]=rotateValue(xorValue(state,(i*2654435769)%4294967296),i*3)
+    end
+    return memory
+end
 local function decodeBound(context,index,entry)
     local decode=newDecoder(context)
     local pc=entry
-    local state,out,length,written
+    local state,out,length,written,memory
     local budget=context[__INSTRUCTION_COUNT__]
     while pc~=0 and budget>0 do
         budget-=1
@@ -23,12 +30,25 @@ local function decodeBound(context,index,entry)
             if length>budget*4 then fail() end
             out=createTable(length)
             written=0
+            memory=newLiteralMemory(state)
         elseif __LITERAL_XOR__ then
             if state==nil or b<1 or b>31 then fail() end
             state=(rotateValue(xorValue(state,a),b)+c)%4294967296
         elseif __LITERAL_ADD__ then
             if state==nil or b<1 or b>31 then fail() end
             state=xorValue(rotateValue((state+a)%4294967296,b),c)
+        elseif __LITERAL_MIX__ then
+            if state==nil or b<1 or b>31 then fail() end
+            local slot=andValue(state,7)+1
+            local previous=memory[slot]
+            local value=xorValue(state,previous)
+            local low=andValue(value,65535)
+            local multiplier=andValue(a,65535)
+            multiplier=multiplier-multiplier%2+1
+            local product=(low*multiplier+shiftRight(a,16))%65536
+            local round=low*65536+xorValue(shiftRight(value,16),product)
+            state=xorValue(rotateValue(round,b),c)
+            memory[slot]=xorValue((rotateValue(previous,11)+state)%4294967296,a)
         elseif __LITERAL_BYTES__ then
             if state==nil then fail() end
             local count=b%8

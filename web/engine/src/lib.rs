@@ -6,6 +6,7 @@ use wasm_bindgen::prelude::*;
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    optimize_code: Option<bool>,
     preset: String,
     seed: Option<String>,
     rename_identifiers: Option<bool>,
@@ -70,6 +71,7 @@ impl Settings {
         }
         macro_rules! apply { ($($field:ident),* $(,)?) => { $(if let Some(value)=self.$field { config.$field=value; })* }; }
         apply!(
+            optimize_code,
             rename_identifiers,
             encrypt_strings,
             split_strings,
@@ -147,6 +149,8 @@ pub fn run(source: &str, json: &str) -> Result<String, String> {
         warnings.push(format!("{count} native function(s): {reason}"));
     }
     let report = serde_json::json!({
+        "optimization_enabled":r.optimization_enabled,"optimized_expressions":r.optimized_expressions,
+        "removed_branches":r.removed_branches,"removed_loops":r.removed_loops,"removed_empty_blocks":r.removed_empty_blocks,
         "input_bytes":r.input_bytes,"output_bytes":r.output_bytes,"renamed_bindings":r.renamed_bindings,
         "encrypted_strings":r.encrypted_strings,"string_references":r.string_references,
         "split_strings":r.split_strings,"obfuscated_numbers":r.obfuscated_numbers,"hidden_fields":r.hidden_fields,
@@ -198,6 +202,35 @@ pub fn identify_script(source: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn optimization_settings_match_native_pipeline_and_report_applied_work() {
+        let source =
+            "local n=(19+23)*(7-2);if false then n+=17 end;while false do n-=3 end;return n";
+        let baseline: serde_json::Value =
+            serde_json::from_str(&run(source, r#"{"preset":"hardened","seed":"42"}"#).unwrap())
+                .unwrap();
+        let result: serde_json::Value = serde_json::from_str(
+            &run(
+                source,
+                r#"{"preset":"hardened","seed":"42","optimize_code":true}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(baseline["report"]["optimization_enabled"], false);
+        assert_eq!(result["report"]["optimization_enabled"], true);
+        assert!(result["report"]["optimized_expressions"].as_u64().unwrap() >= 3);
+        assert!(
+            result["report"]["vm_instructions"].as_u64().unwrap()
+                < baseline["report"]["vm_instructions"].as_u64().unwrap()
+        );
+        let mut config = ObfuscationConfig::hardened().with_seed(42);
+        config.optimize_code = true;
+        assert_eq!(
+            result["code"],
+            Obfuscator::new(config).obfuscate(source).unwrap()
+        );
+    }
     #[test]
     fn detector_recognizes_output_without_executing_it() {
         let output = Obfuscator::new(ObfuscationConfig::lightweight().with_seed(42))

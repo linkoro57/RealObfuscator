@@ -27,6 +27,7 @@ mod function_vm;
 pub mod lexer;
 mod names;
 pub mod obfuscator;
+mod optimizer;
 pub mod rng;
 mod source;
 mod syntax;

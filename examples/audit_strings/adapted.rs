@@ -26,6 +26,7 @@ pub struct ResultSet {
     pub bound_rejected: usize,
     pub recipe_strings: usize,
     pub recipe_steps: usize,
+    pub recipe_memory_steps: usize,
     pub concatenations: usize,
 }
 
@@ -699,6 +700,7 @@ pub fn extract_adapted(source: &str) -> Result<ResultSet, Box<dyn Error>> {
             }
         }
         result.recipe_steps = ctx.recipe_steps.get();
+        result.recipe_memory_steps = ctx.recipe_memory_steps.get();
         Ok(result)
     })
 }
@@ -775,6 +777,7 @@ mod tests {
                     assert!(result.concatenations > 0);
                     assert_eq!(result.graphs > 0, mode > 0);
                     assert_eq!(result.bound_strings > 0, mode == 2);
+                    assert_eq!(result.recipe_memory_steps > 0, mode == 2);
                 }
             }
         }

@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/obfuscate.html');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.getByRole('button', { name: 'Obfuscate', exact: true })).toBeEnabled({ timeout: 45000 });
 });
@@ -74,6 +74,46 @@ test('Hardened literal programs are enabled by default and can be disabled expli
   const report = JSON.parse(readFileSync(await (await pending).path(), 'utf8'));
   expect(report.report.vm_literal_instructions).toBe(0);
   expect(report.report.vm_bound_strings).toBeGreaterThan(0);
+});
+
+test('Optimize code is opt-in and reduces VM work without changing execution', async ({ page }) => {
+  const source = 'local function f()local n=(19+23)*(7-2);if false then n+=17 end;while false do n-=3 end;return n end;print(f())';
+  await page.locator('#source').fill(source);
+  await page.locator('#preset').selectOption('hardened');
+  await page.locator('#seed').fill('42');
+  await page.locator('#obfuscate').click();
+  await expect(page.locator('#run-state')).toHaveText('Done');
+  let pending=page.waitForEvent('download'); await page.locator('#download-report').click();
+  const baseline=JSON.parse(readFileSync(await (await pending).path(),'utf8')).report;
+  expect(baseline.optimization_enabled).toBe(false);
+  const original=await page.locator('#output').inputValue();
+  await page.locator('#open-options').click();
+  await expect(page.locator('#option-optimize_code')).not.toBeChecked();
+  await page.locator('#option-optimize_code').check();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#download')).toBeDisabled();
+  await page.locator('#obfuscate').click();
+  await expect(page.locator('#run-state')).toHaveText('Done');
+  pending=page.waitForEvent('download'); await page.locator('#download-report').click();
+  const optimized=JSON.parse(readFileSync(await (await pending).path(),'utf8')).report;
+  expect(optimized.optimization_enabled).toBe(true);
+  expect(optimized.optimized_expressions).toBeGreaterThan(2);
+  expect(optimized.removed_branches).toBe(1);
+  expect(optimized.removed_loops).toBe(1);
+  expect(optimized.vm_instructions).toBeLessThan(baseline.vm_instructions);
+  await expect(page.locator('#summary')).toContainText('Expressions simplified');
+  const {existsSync,writeFileSync,mkdirSync}=await import('node:fs');
+  const luau=process.env.LUAU_BIN || resolve(`tests/runtime/0.741/${process.platform==='win32'?'luau.exe':'luau'}`);
+  if(existsSync(luau)) {
+    mkdirSync('target/web-tests',{recursive:true});
+    for(const [label,code] of [['baseline',original],['optimized',await page.locator('#output').inputValue()]]) {
+      const path=resolve(`target/web-tests/optimize-${label}.luau`);writeFileSync(path,code);
+      const run=spawnSync(luau,[path],{encoding:'utf8',timeout:10000});expect(run.status).toBe(0);expect(run.stdout.trim()).toBe('210');
+    }
+  }
+  await page.locator('#open-options').click();await page.locator('#reset-options').click();
+  await expect(page.locator('#option-optimize_code')).not.toBeChecked();
+  await page.keyboard.press('Escape');
 });
 
 test('syntax errors, invalid combinations and stale result handling', async ({ page }) => {
@@ -213,7 +253,10 @@ test('pretty output scrolls inside the editor instead of expanding the page', as
   await expect(page.locator('#run-state')).toHaveText('Done');
   const bounds = await page.locator('#output-frame').boundingBox();
   expect(bounds.height).toBeLessThan(900);
-  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(1200);
+  // The marketing page can scroll; generated output must stay inside the playground.
+  const playground = await page.locator('.playground-shell').boundingBox();
+  expect(playground.height).toBeLessThan(1200);
+  expect(await page.locator('#output').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
 });
 
 test('binary file imports preserve literal bytes and reject invalid executable bytes', async ({ page }) => {

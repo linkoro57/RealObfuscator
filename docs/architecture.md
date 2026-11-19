@@ -24,6 +24,16 @@ Type functions execute in a separate analyzer environment. Runtime visitors must
 skip them; the renamer temporarily replaces their bodies and restores them after
 scope traversal. Do not inject runtime helpers into preserved type functions.
 
+The optional `optimizer.rs` pass runs after type stripping and before renaming,
+constant protection or VM compilation. Environment/stack sensitivity is detected
+on the original runtime AST before this pass, so removing a dead branch does not
+silently bypass the existing conservative introspection guard. Literal-only
+folding uses exact integer bounds and preserves signed zero by declining those
+arithmetic cases. Logical/if-expression replacements force a single value for
+calls and varargs. Branch bodies move into `do` blocks to retain lexical scope;
+unknown conditions and their evaluation order are retained. No global lookups,
+function calls, metamethods or iterator protocols are speculatively evaluated.
+
 The source token stream is computed once and reused for reserved names, directives
 and retained comments. Each invocation clones the configured random stream and
 mixes in a stable source hash. Preserve random draw order when changing code that

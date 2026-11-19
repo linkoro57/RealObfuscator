@@ -1,23 +1,8 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Obfuscate Lua and Luau scripts locally in your browser with RealObfuscator. Full settings, local processing and downloadable output.">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
-  <meta name="color-scheme" content="light">
-  <title>RealObfuscator — Luau Playground</title>
-  <link rel="icon" type="image/svg+xml" href="./icon.svg">
-  <link rel="stylesheet" href="./styles.css">
-  <script type="module" src="./app.js"></script>
-</head>
-<body>
-  <a class="skip-link" href="#source">Skip to source code</a>
+<section class="page-heading site-container"><p class="eyebrow">YOUR WORKSPACE</p><h1>Obfuscate your script.</h1><p>Choose your settings. Transform your code. Keep everything local.</p></section>  <div class="playground-shell">
   <header class="header">
-    <div class="brand"><img src="./icon.svg" alt="" width="38" height="38"><div><h1>RealObfuscator <span>Playground</span></h1><p>Your code. Your settings. In your browser.</p></div></div>
-    <nav aria-label="Links and actions"><a class="button quiet" href="https://github.com/linkoro57/RealObfuscator" target="_blank" rel="noreferrer">GitHub ↗</a><a class="button quiet docs-link" href="https://github.com/linkoro57/RealObfuscator#readme" target="_blank" rel="noreferrer">Documentation ↗</a><button id="open-detector" class="button" type="button">Identify a script</button><button id="obfuscate" class="button primary" type="submit" form="configuration" disabled><span aria-hidden="true">▷</span> Obfuscate</button><button id="cancel" class="button danger" hidden>Cancel</button></nav>
+    <div class="brand"><img src="./icon.svg" alt="" width="38" height="38"><div><h2>RealObfuscator <span>Playground</span></h2><p>Your code. Your settings. In your browser.</p></div></div>
+    <nav aria-label="Links and actions"><a class="button quiet" href="https://github.com/linkoro57/RealObfuscator" target="_blank" rel="noreferrer">GitHub ↗</a><a class="button quiet docs-link" href="./docs.html" target="_blank" rel="noreferrer">Documentation ↗</a><button id="open-detector" class="button" type="button">Identify a script</button><button id="obfuscate" class="button primary" type="submit" form="configuration" disabled><span aria-hidden="true">▷</span> Obfuscate</button><button id="cancel" class="button danger" hidden>Cancel</button></nav>
   </header>
-  <main>
     <form id="configuration" class="toolbar">
       <div class="field preset-field"><label for="preset">Preset</label><select id="preset"><option value="lightweight">Lightweight</option><option value="rename">Rename</option><option value="native">Native</option><option value="vm">Virtual machine</option><option value="compatible">Compatible</option><option value="hardened">Hardened (strict)</option></select></div>
       <div class="field runtime-field"><label for="runtime">Target</label><input id="runtime" value="Luau / Roblox" readonly></div>
@@ -46,7 +31,7 @@
       </aside>
     </div>
     <footer class="page-footer"><span>RealObfuscator · Rust + WebAssembly</span><span>.lua and .luau files · Luau runtime · 1 MiB maximum</span><span><a href="./LICENSE">GPL-3.0-only</a> · <a href="./NOTICE.md">Attribution notices</a></span></footer>
-  </main>
+  </div>
   <dialog id="options-dialog" aria-labelledby="options-heading">
     <form method="dialog" class="dialog-header"><div><h2 id="options-heading">Advanced settings</h2><p>Settings override the selected preset.</p></div><button class="button icon-button" aria-label="Close settings">✕</button></form>
     <div class="dialog-body"><p class="options-help">Changing presets resets these settings. Incompatible combinations return an error before output is generated.</p><div id="options-fields"></div></div>
@@ -63,6 +48,3 @@
     </div>
     <div class="dialog-footer"><button id="detect-load" class="button" type="button">Load file</button><div class="detector-actions"><button id="detect-cancel" class="button" type="button" hidden>Cancel scan</button><button id="detect-run" class="button primary" type="button">Check script</button></div></div>
   </dialog>
-  <noscript><p class="error">JavaScript and WebAssembly are required to use this playground.</p></noscript>
-</body>
-</html>

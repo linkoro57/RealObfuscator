@@ -38,6 +38,7 @@ pub(super) enum Op {
     LiteralStart,
     LiteralXor,
     LiteralAdd,
+    LiteralMix,
     LiteralBytes,
     LiteralReturn,
 }

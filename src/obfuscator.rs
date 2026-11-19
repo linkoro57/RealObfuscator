@@ -27,6 +27,11 @@ impl std::error::Error for ObfuscationError {}
 /// Counts applied transformations, including zero when a pass has no eligible input.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ObfuscationReport {
+    pub optimization_enabled: bool,
+    pub optimized_expressions: usize,
+    pub removed_branches: usize,
+    pub removed_loops: usize,
+    pub removed_empty_blocks: usize,
     pub input_bytes: usize,
     pub output_bytes: usize,
     pub renamed_bindings: usize,
@@ -145,6 +150,7 @@ impl Obfuscator {
         let tokens = lex(source).map_err(|e| ObfuscationError(e.to_string()))?;
         let mut report = ObfuscationReport {
             input_bytes,
+            optimization_enabled: self.config.optimize_code,
             ..Default::default()
         };
         let resources = Resources::from_memory();
@@ -157,6 +163,9 @@ impl Obfuscator {
         let rng = self.source_rng(source);
         let environment_sensitive =
             self.config.virtualize && crate::function_vm::environment_sensitive(&mut block);
+        if self.config.optimize_code {
+            crate::optimizer::optimize(&mut block, &mut report);
+        }
         let mut names = Names::new(
             &tokens,
             rng,

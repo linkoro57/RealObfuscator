@@ -7,6 +7,24 @@ does not execute input or output scripts and does not persist source in storage.
 
 ## Interface
 
+The homepage introduces RealObfuscator with a responsive purple hero, a locally
+generated decorative globe and an overview of the available transformations.
+"Open obfuscator" and "Obfuscate a script" lead to the dedicated workspace.
+The globe respects reduced-motion preferences and pauses when off screen.
+All visual assets, styles and scripts are served locally.
+
+The static website has eight pages: home, features, obfuscator, script
+identification, documentation, FAQ, support, and privacy/license information.
+Shared navigation and footers are rendered by `scripts/build-pages.mjs` from
+`web/site-layout.mjs` and the HTML content in `web/pages/`. URLs use relative
+`.html` paths, including on a GitHub Pages repository subpath.
+
+The color-theme selector offers Light, Dark, and System. `web/theme.js` applies
+the saved preference before the styles load and responds to device-theme changes
+in System mode. Only the theme preference is stored locally, never source code.
+FAQ and documentation search filter local content. The support helper prepares
+a GitHub issue link for user review; it never sends or submits a report.
+
 Paste source or load a `.lua` / `.luau` file, select a profile and generate the
 output. Advanced controls expose the public transformation, VM, string, naming,
 formatting and coverage settings. A seed is optional and is passed as decimal text

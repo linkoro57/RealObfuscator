@@ -54,6 +54,7 @@ pub(super) fn runtime(
         (Op::LiteralStart, "__LITERAL_START__"),
         (Op::LiteralXor, "__LITERAL_XOR__"),
         (Op::LiteralAdd, "__LITERAL_ADD__"),
+        (Op::LiteralMix, "__LITERAL_MIX__"),
         (Op::LiteralBytes, "__LITERAL_BYTES__"),
         (Op::LiteralReturn, "__LITERAL_RETURN__"),
     ] {
@@ -192,7 +193,7 @@ fn handler(op: &Op, nested_execution: bool, bind_strings: bool) -> String {
         Op::CellGet => "r[a]=r[b][1]",
         Op::CellSet => "r[a][1]=r[b]",
         Op::Closure => "local cells={};for i=1,#r[c] do local id=r[c][i];cells[id]=r[id]end;r[a]=external[b](cells)",
-        Op::LiteralStart | Op::LiteralXor | Op::LiteralAdd | Op::LiteralBytes | Op::LiteralReturn => "fail()",
+        Op::LiteralStart | Op::LiteralXor | Op::LiteralAdd | Op::LiteralMix | Op::LiteralBytes | Op::LiteralReturn => "fail()",
         Op::Binary(operator) => return format!("r[a]=r[b]{operator}r[c]"),
         Op::BinaryConstant(operator) => return format!("{}r[a]=r[b]{operator}value", constant("c", bind_strings)),
         Op::Unary(operator) => return format!("r[a]={operator} r[b]"),

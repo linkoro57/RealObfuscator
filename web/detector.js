@@ -23,7 +23,7 @@ function show(title, description, error = false) {
 function invalidate() {
   version++; stop(); status.hidden = true;
 }
-$('open-detector').addEventListener('click', () => { dialog.showModal(); input.focus(); });
+$('open-detector')?.addEventListener('click', () => { dialog.showModal(); input.focus(); });
 dialog.addEventListener('close', () => { version++; stop(); });
 input.addEventListener('input', invalidate);
 $('detect-cancel').addEventListener('click', () => { version++; stop(); show('Scan cancelled', 'The script remains in the detector.'); });

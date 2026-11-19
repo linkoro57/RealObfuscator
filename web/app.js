@@ -95,6 +95,7 @@ function renderReport(report, duration) {
   $('summary').replaceChildren(); $('summary').hidden = false;
   for (const [label, value] of [ ['Source', size(report.input_bytes)], ['Output', size(report.output_bytes)], ['Size ratio', `×${(report.output_bytes / report.input_bytes).toFixed(2)}`], ['Time', `${Math.round(duration)} ms`], ['Encoded strings', report.encrypted_strings], ['VM functions', report.vm_functions], ['VM instructions', report.vm_instructions] ]) addStat($('summary'), label, value);
   $('stats').replaceChildren();
+  if (report.optimization_enabled) addStat($('summary'), 'Expressions simplified', report.optimized_expressions);
   for (const [key, value] of Object.entries(report)) addStat($('stats'), key, value && typeof value === 'object' ? JSON.stringify(value) : value ?? '—');
   $('stats-details').hidden = $('download-report').hidden = false;
 }

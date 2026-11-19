@@ -159,6 +159,32 @@ Arithmetic predicates such as `(x*(x+1))%2==0` are algebraic identities, not a m
 
 ## Options
 
+Source optimization is opt-in in every profile. Enable **Optimize code** under
+Advanced settings on the website, set the library field `optimize_code = true`,
+or use the CLI:
+
+```sh
+realobfuscator script.luau --mode vm --optimize --stats
+realobfuscator script.luau --mode compatible --optimize --stats
+realobfuscator script.luau --optimize --no-optimize  # last option wins
+```
+
+The pass folds exact integer literal arithmetic, primitive comparisons, bounded
+string concatenations/lengths and known short-circuit/if expressions. It removes
+unreachable conditional branches, `while false`/`while nil` loops and empty blocks
+before obfuscation. Selected call/vararg expressions remain single-valued and
+retained branches keep their lexical scopes. Floating arithmetic, signed-zero
+arithmetic, division by zero, modulo, exponentiation, property reads and
+metamethod-sensitive identities such as `object * 1` are left intact. Calls are
+never evaluated by the optimizer, cached or reordered. Type functions are skipped.
+
+`optimization_enabled`, `optimized_expressions`, `removed_branches`,
+`removed_loops` and `removed_empty_blocks` report applied work, including zero.
+Fewer custom-VM instructions or a smaller output can improve particular workloads;
+neither result guarantees a frame-rate gain. This option does not establish
+stronger protection than Centurion or any other obfuscator.
+See [optimization behavior, verification and local measurements](docs/optimization.md).
+
 [Prototype-bound hardening](docs/hardening.md) adds an extraction stage for strings
 in VM constants and native bridge arguments. It does not guarantee resistance to
 an adapted extractor or runtime instrumentation:
